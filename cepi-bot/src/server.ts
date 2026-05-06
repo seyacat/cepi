@@ -213,6 +213,56 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── Stage "cerrar episodio [YYYY-MM-DD] [motivo]" behind gate ──
+      const closeMatch = message.trim().match(/^\/?\s*cerrar\s+episodio\b\s*([0-9]{4}-[0-9]{2}-[0-9]{2})?\s*(.*)$/i);
+      if (closeMatch && activeEpisodeId) {
+        const proxFecha   = closeMatch[1] || '';
+        const proxMotivo  = (closeMatch[2] || '').trim() || 'Control de seguimiento';
+
+        // PUT replaces `data` wholesale, so we fetch the current episode and
+        // merge the close fields on top to preserve patient_id, medico_id,
+        // fecha, motivo_consulta, etc.
+        const cur = await mcp.call('entities.get', { id: activeEpisodeId });
+        const curData = (cur.ok && cur.data?.data) ? { ...cur.data.data } : {};
+        delete (curData as any)._relations;
+        const merged: Record<string, unknown> = { ...curData, estado: 'cerrado' };
+        if (proxFecha) {
+          merged.proximo_control_fecha  = proxFecha;
+          merged.proximo_control_motivo = proxMotivo;
+        }
+
+        session.pending_action = {
+          summary: `Cerrar episodio ${activeEpisodeId}`,
+          tool: 'entities.update',
+          args: {
+            id: activeEpisodeId,
+            record_type: 'business',
+            data: merged,
+          },
+          successMessage: proxFecha
+            ? `Episodio cerrado. Programé recordatorio de control para ${proxFecha} ("${proxMotivo}").`
+            : `Episodio cerrado.`,
+          createdAt: new Date().toISOString(),
+        };
+        const ackText =
+          `Voy a cerrar el episodio ${activeEpisodeId}.\n` +
+          (proxFecha
+            ? `  • próximo control: ${proxFecha}\n  • motivo: ${proxMotivo}\n`
+            : `  • sin próximo control programado\n`) +
+          `\n¿Confirmas? (sí / no)`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+        });
+      }
+
       // ── Stage "nuevo episodio <motivo>" behind confirmation gate ──
       const newEpisodeMatch = message.trim().match(/^\/?\s*nuevo\s+episodio\b\s*(.*)$/i);
       if (newEpisodeMatch) {
