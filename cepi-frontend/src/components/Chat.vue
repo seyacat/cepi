@@ -43,6 +43,18 @@
         <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>
       </div>
 
+      <div v-if="pending" class="pending-card">
+        <div class="pending-head">
+          <span class="pending-tag">Pendiente</span>
+          <code class="pending-tool">{{ pending.tool }}</code>
+        </div>
+        <p class="pending-summary">{{ pending.summary }}</p>
+        <div class="pending-actions">
+          <button class="confirm" @click="send('sí')" :disabled="busy">✓ Confirmar</button>
+          <button class="cancel"  @click="send('no')" :disabled="busy">✗ Cancelar</button>
+        </div>
+      </div>
+
       <form class="composer" @submit.prevent="onSubmit">
         <textarea
           v-model="draft"
@@ -88,6 +100,7 @@ const error = ref('');
 const sessionId = ref(loadSessionId());
 const activePatient = ref(null);
 const activeEpisode = ref(null);
+const pending = ref(null);
 const feedEl = ref(null);
 
 function labelFor(role) {
@@ -114,6 +127,7 @@ async function send(message) {
     }
     if (typeof r?.active_patient_id !== 'undefined') activePatient.value = r.active_patient_id;
     if (typeof r?.active_episode_id !== 'undefined') activeEpisode.value = r.active_episode_id;
+    if (typeof r?.pending_action     !== 'undefined') pending.value = r.pending_action;
     if (Array.isArray(r?.history)) {
       // Filter out internal system context turns the server prepends.
       turns.value = r.history.filter(t => t.role !== 'system');
@@ -162,6 +176,7 @@ function newSession() {
   turns.value = [];
   activePatient.value = null;
   activeEpisode.value = null;
+  pending.value = null;
 }
 
 onMounted(() => { /* hydrate from session_id later if needed */ });
@@ -231,4 +246,24 @@ onMounted(() => { /* hydrate from session_id later if needed */ });
 .attached strong { color: #1e1b4b; }
 .attached .link { background: transparent; color: #6366f1; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
 .error { color: #dc2626; font-size: 13px; margin: 0; }
+
+.pending-card {
+  background: #fefce8; border: 2px solid #facc15; border-radius: 8px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.pending-head { display: flex; gap: 8px; align-items: center; }
+.pending-tag {
+  background: #facc15; color: #713f12; font-size: 10px; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px; letter-spacing: .04em; font-weight: 700;
+}
+.pending-tool { font-family: ui-monospace, monospace; color: #713f12; font-size: 12px; }
+.pending-summary { margin: 0; color: #422006; font-size: 14px; }
+.pending-actions { display: flex; gap: 8px; }
+.pending-actions button {
+  flex: 1; padding: 8px 14px; border: none; border-radius: 4px; font-weight: 600;
+  cursor: pointer;
+}
+.pending-actions .confirm { background: #16a34a; color: #fff; }
+.pending-actions .cancel  { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+.pending-actions button[disabled] { opacity: .5; cursor: not-allowed; }
 </style>

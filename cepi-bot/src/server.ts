@@ -260,6 +260,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           ok: true, session_id: sessionId, text: ackText,
           history: session.turns, toolCalls: [],
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          pending_action:    session.pending_action,
         });
       }
 
@@ -321,6 +322,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           ok: true, session_id: sessionId, text: ackText,
           history: session.turns, toolCalls: [],
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          pending_action:    session.pending_action,
         });
       }
 
@@ -402,11 +404,18 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       }
     }
 
+    let pendingAction: any = null;
+    if (sessionId && mcp) {
+      const finalSession = await loadSession(mcp, sessionId);
+      pendingAction = finalSession?.pending_action || null;
+    }
+
     res.json({
       ok: true,
       session_id: sessionId,
       active_patient_id: activePatientId,
       active_episode_id: activeEpisodeId,
+      pending_action: pendingAction,
       ...out,
     });
   } catch (err) { next(err); }
