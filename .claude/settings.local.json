@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(npm install *)",
+      "Bash(pm2 start *)",
+      "Bash(pm2 delete *)",
+      "Bash(pm2 logs *)",
+      "Bash(pm2 restart *)",
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(pm2 status *)",
+      "Bash(pm2 save *)",
+      "WebFetch(domain:cepi.ec)",
+      "Bash(curl -s \"https://cepi.ec/\")",
+      "Bash(curl -s \"https://cepi.ec/wp-content/themes/botiga/assets/css/elementor.min.css\")",
+      "Bash(curl -s \"https://cepi.ec/wp-content/fonts/9e92015bf3516deaedeb83a0427aa163.css\")",
+      "Bash(curl -s \"https://cepi.ec/wp-content/uploads/elementor/css/post-6.css\")",
+      "Bash(node *)",
+      "WebFetch(domain:idoc24.com)",
+      "Bash(curl -s \"https://idoc24.com/es/buscador-de-dermatologia/?search=acne\" -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\")",
+      "Bash(curl -s \"https://idoc24.com/es/buscador-de-dermatologia/?search=acne\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(findstr /i \"article class=\\\\\"\")",
+      "Bash(Select-String -Pattern 'article' -AllMatches)",
+      "Bash(Select-Object -First 10)",
+      "PowerShell($html = \\(Invoke-WebRequest -Uri \"https://idoc24.com/es/buscador-de-dermatologia/?search=acne\" -UserAgent \"Mozilla/5.0\"\\).Content; $html | Select-String -Pattern '<article' -AllMatches | Select-Object -First 5)",
+      "WebFetch(domain:ml.firstderm.me)",
+      "Skill(update-config)",
+      "WebSearch"
+    ]
+  }
+}

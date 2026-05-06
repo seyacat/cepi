@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#9f6d1e" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="https://cepi.ec/wp-content/uploads/2022/12/favicon-cepi-100x100.jpg" />
+    <title>Asistente Cepi</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <div class="header-left">
+          <img
+            class="logo"
+            src="https://cepi.ec/wp-content/uploads/2022/12/logo-cepi-final-min.png"
+            alt="CEPI Centro de la Piel"
+          />
+        </div>
+        <div class="header-center">
+          <button id="install-btn" hidden>
+            <span class="install-icon">⬇</span>
+            Instalar Asistente Cepi
+          </button>
+        </div>
+        <div class="header-right"></div>
+      </header>
+
+      <div id="scroll-area">
+        <div id="inner">
+          <div id="welcome">
+            <img
+              class="welcome-logo"
+              src="https://cepi.ec/wp-content/uploads/2022/12/logo-cepi-final-min.png"
+              alt="CEPI"
+            />
+            <p>Hola, soy el asistente virtual de<br/><strong>CEPI Centro de la Piel</strong>.<br/>¿En qué puedo ayudarte hoy?</p>
+          </div>
+          <div id="messages"></div>
+          <form id="chat-form">
+            <textarea id="input" placeholder="Escribe tu consulta..." rows="1"></textarea>
+            <button type="submit" aria-label="Enviar">➤</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

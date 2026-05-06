@@ -1,0 +1,23 @@
+{
+  "name": "Asistente Cepi",
+  "short_name": "Asistente Cepi",
+  "description": "Asistente virtual de CEPI Centro de la Piel",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f4f8",
+  "theme_color": "#9f6d1e",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
