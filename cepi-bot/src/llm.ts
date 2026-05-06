@@ -89,6 +89,12 @@ export class StubLLMAdapter implements LLMAdapter {
     if (has('diagnosticos', 'diagnósticos', 'diagnoses')) {
       return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '13000000-0000-0000-0000-000000000000', limit: 20 } } };
     }
+    // CIE-10 catalog search: "cie10 melanoma", "código psoriasis"
+    const cieMatch = msg.match(/^\s*(?:cie[- ]?10|c[óo]digo|icd[- ]?10)\s*[:]?\s*(.+)$/i);
+    if (cieMatch) {
+      const q = cieMatch[1].trim();
+      return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '19000000-0000-0000-0000-000000000000', search: q, limit: 10 } } };
+    }
     return {
       kind: 'message',
       text: `Eco: "${last?.content || ''}". Sugerencias: "tools", "whoami", "definitions", "pacientes".`,
