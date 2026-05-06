@@ -24,10 +24,11 @@
 
       <h3 style="margin-top: 16px">Atajos</h3>
       <div class="shortcuts">
-        <button @click="send('whoami')"      :disabled="busy">whoami</button>
-        <button @click="send('definitions')" :disabled="busy">definitions</button>
-        <button @click="send('pacientes')"   :disabled="busy">pacientes</button>
-        <button @click="send('episodios')"   :disabled="busy">episodios</button>
+        <button @click="send('/help')"        :disabled="busy">/help</button>
+        <button @click="send('whoami')"       :disabled="busy">whoami</button>
+        <button @click="send('definitions')"  :disabled="busy">definitions</button>
+        <button @click="send('pacientes')"    :disabled="busy">pacientes</button>
+        <button @click="send('episodios')"    :disabled="busy">episodios</button>
         <button @click="send('diagnósticos')" :disabled="busy">diagnósticos</button>
         <button @click="send('cie10 melanoma')" :disabled="busy">cie10 melanoma</button>
       </div>

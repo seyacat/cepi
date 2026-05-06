@@ -90,10 +90,38 @@ export class StubLLMAdapter implements LLMAdapter {
       };
     }
 
-    if (has('tools', '/tools')) {
+    if (has('/help', 'ayuda', 'comandos')) {
       return {
         kind: 'message',
-        text: 'Tools disponibles:\n' + tools.map(t => `- ${t.name}: ${t.description || ''}`).join('\n'),
+        text: [
+          'Comandos del bot CEPI:',
+          '',
+          '**Contexto**',
+          '  activar paciente <uuid>   → fija el paciente activo de la sesión',
+          '  activar episodio <uuid>   → fija el episodio activo',
+          '  salir paciente | salir episodio',
+          '',
+          '**Flujos clínicos** (cada uno pide confirmación)',
+          '  nuevo episodio <motivo>    → crea episodio para el paciente activo',
+          '  cerrar episodio [YYYY-MM-DD] [motivo] → cierra episodio + reminder',
+          '  📎 (adjuntar imagen)        → crea clinical_image ligada al episodio',
+          '',
+          '**Lectura rápida**',
+          '  whoami | definitions | pacientes | episodios | diagnósticos',
+          '  cie10 <texto>               → busca código CIE-10 por descripción',
+          '',
+          '**Confirmación**',
+          '  sí / ok / confirmar / adelante / yes',
+          '  no / cancelar',
+          '',
+          'También tengo acceso a las tools genéricas del MCP de TodoERP. Escribe "tools" para verlas.',
+        ].join('\n'),
+      };
+    }
+    if (has('tools')) {
+      return {
+        kind: 'message',
+        text: 'Tools MCP disponibles:\n' + tools.map(t => `- \`${t.name}\`: ${t.description || ''}`).join('\n'),
       };
     }
     if (has('whoami', '/whoami')) {
