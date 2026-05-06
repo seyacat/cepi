@@ -52,15 +52,25 @@ export class StubLLMAdapter implements LLMAdapter {
 
   async step(history: ChatTurn[], tools: ToolSpec[]): Promise<LLMResponse> {
     // If the very last history entry is a tool result, summarise and stop —
-    // never chain more than one tool call in stub mode.
+    // never chain more than one tool call in stub mode. The frontend renders
+    // the raw tool turn nicely, so keep this assistant message terse.
     const tail = history[history.length - 1];
     if (tail?.role === 'tool') {
-      let preview = tail.content;
-      if (preview.length > 800) preview = preview.slice(0, 800) + '...';
-      return {
-        kind: 'message',
-        text: `Resultado de \`${tail.tool_name}\`:\n\`\`\`json\n${preview}\n\`\`\``,
-      };
+      try {
+        const data = JSON.parse(tail.content);
+        if (Array.isArray(data)) {
+          return {
+            kind: 'message',
+            text: `Listo. ${data.length} resultado${data.length === 1 ? '' : 's'} de \`${tail.tool_name}\` arriba.`,
+          };
+        }
+        if (data?.error) {
+          return { kind: 'message', text: `\`${tail.tool_name}\` devolvió error: ${data.error}` };
+        }
+        return { kind: 'message', text: `Resultado de \`${tail.tool_name}\` arriba.` };
+      } catch {
+        return { kind: 'message', text: `Resultado de \`${tail.tool_name}\` arriba.` };
+      }
     }
 
     const last = [...history].reverse().find(t => t.role === 'user');

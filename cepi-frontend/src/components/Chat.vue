@@ -20,8 +20,8 @@
       <div class="feed" ref="feedEl">
         <div v-for="(t, i) in turns" :key="i" :class="['turn', t.role]">
           <span class="role">{{ labelFor(t.role) }}</span>
-          <pre class="content">{{ t.content }}</pre>
-          <span v-if="t.tool_name" class="tool-name">{{ t.tool_name }}</span>
+          <ToolResult v-if="t.role === 'tool'" :tool-name="t.tool_name || ''" :raw-content="t.content" />
+          <pre v-else class="content">{{ t.content }}</pre>
         </div>
         <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>
       </div>
@@ -44,6 +44,7 @@
 <script setup>
 import { ref, nextTick, onMounted } from 'vue';
 import { chat, loadSessionId, saveSessionId } from '../api.js';
+import ToolResult from './ToolResult.vue';
 
 defineProps({ user: Object });
 
