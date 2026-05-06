@@ -81,56 +81,70 @@ Diseñar e implementar un asistente médico conversacional que use TodoERP como 
 
 ## 5. Stakeholders y roles
 
-| Rol | Quién es | Qué hace en el sistema |
-|---|---|---|
-| **Guest** | Visitante anónimo | Consulta el bot público de orientación (lo que ya existe), accede a formularios públicos (e.g., pre-registro). Sin persistencia salvo la solicitud. |
-| **Paciente** | Persona registrada | Conversa con el bot para autollenar antecedentes, alergias, medicación; agenda; ve su propia ficha y consultas pasadas; mensajería con su médico. |
-| **Médico** | Profesional asignado | Conversa con el bot durante/después de consulta para registrar episodio; ve y edita las fichas de **sus** pacientes; sube imágenes; firma diagnóstico y plan. |
-| **Supermédico** | Médico senior / supervisor | Lee toda la base clínica; revisa, comenta o sobrescribe diagnósticos de otros médicos; dashboards agregados; auditoría clínica. |
-| **Admin** | Operador del sistema | Gestión de usuarios, roles, configuraciones de formularios, traducciones, auditoría técnica. **No** debe poder leer datos clínicos por defecto (separación de roles administrativo / clínico). |
+| Rol | Quién es | UI que usa | Qué hace en el sistema |
+|---|---|---|---|
+| **Guest** | Visitante anónimo | Frontend médico (modo público, sin login) | Bot de orientación, formularios públicos, pre-registro. Sin persistencia salvo la solicitud. |
+| **Paciente** | Persona registrada (modo opcional v1.5) | Frontend médico (login con magic link) | Conversa con el bot para autollenar antecedentes, ve su propia ficha y consultas pasadas, mensajería con su médico. |
+| **Médico** | Profesional asignado | Frontend médico (login email+password) | Conversa con el bot durante/después de consulta para registrar episodio; ve y edita las fichas de **sus** pacientes; sube imágenes; firma diagnóstico presuntivo. Escala casos a colegas (CU-8). |
+| **Supermédico** | Médico senior / supervisor | Frontend médico (login email+password) | Lee toda la base clínica; revisa diagnósticos; aprueba permisos temporales y solicitudes de revisión; dashboards agregados; auditoría clínica. |
+| **Admin** | Operador del sistema | **TodoERP** (frontend admin Vue 3) | Gestión de usuarios, roles, configuraciones de formularios, traducciones, modelos del `models_registry`, auditoría técnica. **No** lee datos clínicos por defecto (D-1); usa break-glass (§13.5) para acceso ad-hoc. |
 
-> **Decisión abierta D-1:** ¿el admin puede ver datos clínicos? Recomendación: no por defecto, con permiso explícito y auditoría.
+> **D-Aux-4:** TodoERP es exclusivamente para el admin. Médicos, supermédicos, pacientes y guests **no usan TodoERP** — todos operan en el frontend médico unificado (`D:\cepi\frontend`).
 
 ---
 
 ## 6. Arquitectura general
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│                  Frontend (Vue 3 + Vite)                      │
-│  - UI de chat (basada en frontend/ actual)                    │
-│  - UI administrativa de TodoERP (frontend de TodoERP)         │
-└─────────────────┬─────────────────────────┬───────────────────┘
-                  │  HTTP / SSE             │  HTTP (REST clásico)
-                  ▼                         ▼
-┌─────────────────────────────────────┐  ┌─────────────────────┐
-│      Servicio del Agente            │  │  TodoERP Backend    │
-│      (cepi-bot, Node.js)            │  │  (Express + JWT)    │
-│  - Recibe mensajes del usuario      │  │  - Auth, CRUD, etc. │
-│  - LLM con tool-use                 │  │  - REST API actual  │
-│  - Cliente MCP                      │  │                     │
-└──────────────┬──────────────────────┘  └──────────┬──────────┘
-               │ MCP (stdio o HTTP)                 │
-               ▼                                    │
-┌──────────────────────────────────────┐            │
-│   TodoERP MCP Server (NUEVO)         │            │
-│   - Tools: get_patient, upsert_*,    │            │
-│     search, attachments, etc.        │            │
-│   - Reusa servicios y middleware     │◄───────────┘
-│     existentes de TodoERP            │   acceso compartido
-└──────────────┬───────────────────────┘
-               ▼
-        ┌──────────────────┐
-        │   PostgreSQL     │
-        │   (TodoERP DB)   │
-        └──────────────────┘
+┌─────────────────────────────┐    ┌──────────────────────────────────────┐
+│  Admin                      │    │  Guest / Paciente / Médico /         │
+│  → TodoERP frontend (Vue 3) │    │  Supermédico                         │
+│    Gestión de usuarios,     │    │  → Frontend médico unificado         │
+│    forms, permisos, modelos │    │    (D:\cepi\frontend)                │
+└──────────────┬──────────────┘    │    Chat + ficha paciente + episodios │
+               │ REST              │    + galería + bandeja revisión      │
+               │                   └──────────────────┬───────────────────┘
+               │                                      │ HTTP / SSE
+               ▼                                      ▼
+┌──────────────────────────────┐    ┌────────────────────────────────────┐
+│   TodoERP Backend            │    │    Agente médico (cepi-bot)        │
+│   (Express + JWT)            │    │    Node.js, tool-use con Claude    │
+│   REST CRUD, auth, permisos  │    │    Cliente MCP                     │
+│   pg-boss, Brevo, vectores   │    │    Redacción PII en lectura (D-4)  │
+└──────────────┬───────────────┘    └─────────────┬──────────────────────┘
+               │                                  │ MCP (stdio/HTTP)
+               │  acceso compartido               ▼
+               │                    ┌──────────────────────────────────┐
+               │                    │   TodoERP MCP Server (NUEVO)     │
+               │                    │   Tools genéricas:               │
+               │                    │   entities.* / relations.* /     │
+               │                    │   reminders.* / vectors.* /      │
+               │                    │   classifications.* / chatter.* /│
+               │                    │   permissions.* / attachments.*  │
+               └────────────────────┴──────────────┬───────────────────┘
+                                                   ▼
+                                            ┌─────────────────┐
+                                            │   PostgreSQL    │
+                                            │   + pgvector    │
+                                            └────────┬────────┘
+                                                     │
+                              ┌──────────────────────┴──────────────────┐
+                              ▼                                         ▼
+                  ┌─────────────────────────┐         ┌─────────────────────────┐
+                  │  Servicio Python ISIC   │         │   Brevo (email)         │
+                  │  (FastAPI, GPU/CPU)     │         │   pg-boss (cola)        │
+                  │  /embed, /classify      │         │                         │
+                  └─────────────────────────┘         └─────────────────────────┘
 ```
 
-### Tres procesos lógicos
+### Cuatro procesos lógicos + servicios externos
 
-1. **TodoERP Backend** (existente, `TodoERP/backend`): API REST, autenticación, permisos. No se reescribe; se extiende.
-2. **TodoERP MCP Server** (nuevo, `TodoERP/mcp/`): proceso que expone capacidades de TodoERP como *tools* MCP. Reutiliza los servicios y middleware de auth/permisos del backend.
-3. **Agente médico (cepi-bot)** (`backend/` actual evoluciona): orquesta el LLM, gestiona contexto de conversación, llama *tools* MCP. El frontend de chat se conecta a este servicio.
+1. **TodoERP Backend** (`TodoERP/backend`): API REST, autenticación, permisos, scheduler de recordatorios, worker de clasificaciones, integración con Brevo. Genérico — no contiene vocabulario médico.
+2. **TodoERP MCP Server** (`TodoERP/mcp/`): expone capacidades genéricas de TodoERP como *tools* MCP. Reutiliza servicios y middleware de auth/permisos del backend.
+3. **Agente médico (cepi-bot)** (`cepi-bot/`, refactor de `backend/` actual): orquesta el LLM (Claude), gestiona contexto de conversación, llama *tools* MCP, **redacta PII en lectura**.
+4. **Servicio Python ISIC** (`medical-models/`): FastAPI + modelo dermatológico local (HAM10000), GPU si disponible, fallback CPU. Procesa imágenes en background vía cola pg-boss.
+
+Servicios externos: **Brevo** (email transaccional para magic link y recordatorios), **Anthropic Claude API** (LLM principal).
 
 ### ¿Por qué MCP?
 
@@ -201,6 +215,58 @@ Casos de uso médicos típicos:
 Casos de uso no médicos:
 - Búsqueda semántica de documentos, productos, candidatos a un puesto, etc.
 
+#### 7.3.4 Permisos temporales (break-glass) — capacidad genérica
+
+Detallado en §13.5. Tabla `temporary_permissions` que extiende el sistema de permisos de TodoERP con concesiones puntuales con TTL, justificación obligatoria, audit en chatter. Dos modos: self-serve con TTL ≤ 1h y notificación post-facto, o solicitud aprobada por un supervisor.
+
+Casos de uso médicos típicos:
+- Admin necesita inspeccionar un episodio para resolver un bug → break-glass 1h, justificación visible al supermédico.
+- Médico necesita ver un paciente de otro colega para una interconsulta puntual.
+
+Casos de uso no médicos:
+- Contador necesita ver una factura confidencial que normalmente no tiene permiso.
+- Soporte necesita ver el ticket de un cliente.
+
+#### 7.3.5 Acción genérica de revisión (escalamiento)
+
+Detallado en §13.6. Tool `entities.request_review(entity_id, { reviewers[], reason, due_at? })` para que un usuario solicite que otros revisen una entidad. Crea recordatorios + nota de chatter + cambio de estado.
+
+Casos de uso médicos típicos:
+- Médico escala un episodio a colegas o al supermédico cuando duda.
+
+Casos de uso no médicos:
+- Escalar una factura sospechosa a un par contable.
+- Escalar un contrato dudoso a legal.
+
+#### 7.3.6 Geolocalización genérica de entidades
+
+Capacidad nueva en TodoERP. Cualquier entidad puede registrar una ubicación geográfica en su `data.location` y consultarse por proximidad. Detallado en §10.7.
+
+Forma del campo (JSONB en `entities.data.location`):
+```json
+{
+  "lat": -0.180653,
+  "lon": -78.467834,
+  "accuracy_m": 15,
+  "altitude_m": 2850,
+  "captured_at": "2026-05-06T15:30:00Z",
+  "source": "exif" | "device" | "manual" | "clinic_default"
+}
+```
+
+Soporte a nivel de BD: extensión `postgis`, columna generada `entities.location_geog GEOGRAPHY(Point,4326)` derivada de `data.location`, índice GIST. Permite `ST_DWithin`, `ST_Distance`, etc. desde una *tool* MCP genérica `entities.search_nearby({ point, radius_m, filter })`.
+
+Casos de uso médicos típicos:
+- Distribución epidemiológica de patologías sobre mapa.
+- Contexto regional para modelos ISIC (incidencia por latitud/UV).
+- Agendamiento por cercanía clínica/paciente.
+- Trazabilidad geográfica de imágenes clínicas (lugar de captura).
+
+Casos de uso no médicos:
+- Sucursales, rutas de entrega, leads por zona, oficinas asignadas.
+
+Privacidad (ver §13.3): la `lat/lon` cruda es PHI cuando la entidad es clínica. Se almacena bruta para el médico tratante; al exponerla a roles que **no** pueden ver al paciente (modo "caso académico", §10.5), el backend redondea a 0.01° (~1 km) o aplica jitter determinista.
+
 ### 7.4 Lo que **no** se añade a TodoERP (vive en el agente o en datos)
 
 - Vocabulario médico (paciente, anamnesis, signos vitales, CIE-10): vive en seed como `entity_definitions` y en el agente como prompts y heurísticas.
@@ -270,6 +336,16 @@ Naming: `<recurso>.<acción>`. **Ningún nombre de tool contiene términos del d
 - `vectors.search({ embedding | text | entity_id, model_id, k, filter? })` → k-NN con filtros sobre metadata
 - `classifications.set(entity_id, model_id, { labels[], confidence, raw? })`
 - `classifications.get(entity_id, { model_id? })`
+
+#### Permisos temporales (capacidad genérica nueva, ver §13.5)
+- `permissions.request_temporary({ permission, scope_entity_id?, reason, duration_seconds })`
+- `permissions.approve_temporary(id)`
+- `permissions.deny_temporary(id, comment?)`
+- `permissions.revoke_temporary(id)`
+- `permissions.list_active_temporary({ user_id? })`
+
+#### Revisión / escalamiento (capacidad genérica nueva, ver §13.6)
+- `entities.request_review(entity_id, { reviewers[], reason, due_at? })` — crea recordatorios para los reviewers y cambia estado de la entidad
 
 ### 8.3 JSON Schema por tool
 
@@ -453,14 +529,16 @@ ISIC (International Skin Imaging Collaboration) ofrece datasets y modelos para c
 
 ### 10.4 Flujo de procesamiento de imagen
 
+> **Principio rector (D-Aux-1, D-Aux-3):** la IA es estrictamente sugerente. **Ninguna escalación es automática.** Tiempo real no es prioridad; certeza sí.
+
 1. Médico/paciente sube imagen → `attachments` (TodoERP) + se crea entidad `clinical_image` ligada al episodio.
-2. Job en cola (BullMQ o similar) procesa la imagen:
+2. Job en cola **pg-boss** procesa la imagen (puede tomar minutos sin problema):
    a. Pre-procesa (resize, normalización).
-   b. Llama al servicio del modelo → recibe embedding + labels.
-   c. `vectors.upsert(<image_id>, 'image', embedding, 'isic-resnet50')`.
-   d. `classifications.set(<image_id>, 'isic-resnet50', { labels, confidence })`.
-   e. Si confidence > umbral en clase "sospecha alta", crea `reminders` para supermédico (escala automáticamente).
-3. El bot, al hablar de la imagen, lee `classifications.get` y lo presenta al médico **como sugerencia, no diagnóstico**.
+   b. Llama al servicio del modelo (local, GPU si disponible / CPU fallback) → recibe embedding + labels (triage binario + multiclase top-5).
+   c. `vectors.upsert(<image_id>, 'image', embedding, 'isic-resnet50-v1')`.
+   d. `classifications.set(<image_id>, 'isic-bin-triage-v1', { labels, confidence })` y `classifications.set(<image_id>, 'isic-multiclass-v1', { labels, confidence })`.
+3. El bot, al hablar de la imagen, lee `classifications.get` y la presenta al médico claramente etiquetada como **"Sugerencia IA"**, visualmente diferenciada, nunca cerca de la palabra "Diagnóstico" sin esa etiqueta.
+4. El médico decide qué hacer con la información: registrar diagnóstico presuntivo propio, escalar a colegas (CU-8), o solicitar examen complementario. **Nada se decide ni escala sin acción explícita del médico.**
 
 ### 10.5 Búsqueda de casos similares
 
@@ -472,6 +550,36 @@ Permisos: la búsqueda respeta visibilidad. Resultados de pacientes que el médi
 
 - `vectors:search`, `vectors:write`, `classifications:write`, `classifications:read`.
 - `models:manage` (admin).
+
+### 10.7 Geolocalización genérica (cross-cutting)
+
+Capacidad transversal: cualquier entidad (imagen, episodio, diagnóstico, sucursal, lead) puede llevar un campo `data.location` con `{ lat, lon, accuracy_m, altitude_m, captured_at, source }`. Forma exacta y motivación en §7.3.6.
+
+**Soporte de BD** (migración `009_geolocation.sql`):
+- `CREATE EXTENSION postgis`.
+- Columna generada `entities.location_geog GEOGRAPHY(Point,4326)` derivada de `data->'location'->>'lat'/'lon'` cuando ambos existen y son numéricos finitos.
+- Índice GIST sobre `location_geog`.
+
+**Tool MCP genérica** `entities.search_nearby({ point: {lat,lon}, radius_m, type?, filter? })`:
+- Usa `ST_DWithin(location_geog, ST_MakePoint(lon,lat)::geography, radius_m)`.
+- Devuelve entidades con su distancia en metros.
+- Respeta los permisos del rol (igual que cualquier `entities.list`).
+
+**Captura por origen:**
+- `clinical_image`: lectura EXIF (`exifr`) al subir el binario; fallback a coords del dispositivo del médico/paciente; fallback final a `clinic_default` configurada en el seed.
+- `episode`: hereda del primer `clinical_image` con location; si no hay imagen, coords del dispositivo del médico al cerrar.
+- `diagnosis`: hereda del episodio padre (no se captura por separado).
+- Entidades no clínicas: setean `data.location` explícitamente (`source: 'manual'`).
+
+**Privacidad** (extiende §13.3):
+- La `lat/lon` exacta de una entidad clínica es PHI.
+- Para roles que pueden ver al paciente: coordenadas brutas.
+- Para roles en modo "caso académico" (§10.5): el backend redondea a 0.01° (~1 km) y elide `accuracy_m`.
+- `entities.search_nearby` aplica el mismo filtrado en la respuesta.
+
+**Permisos:**
+- `geo:search` — invocar `search_nearby` y leer `data.location` cruda.
+- Sin `geo:search` y con sólo `entities:read`, la respuesta entrega la versión redondeada.
 
 ---
 
@@ -499,13 +607,13 @@ Sistema: `medico_principal_id` (rel), `consentimientos[]` (LOPDP, fotos, etc.), 
 
 ### 11.2 Episodio — campos sugeridos
 
-`patient_id` (rel), `medico_id` (rel), `fecha`, `tipo` (presencial/virtual), `motivo_consulta`, `anamnesis`, `signos_vitales` (presión, FC, FR, temp, SatO2, peso, talla), `examen_fisico`, `imagenes[]` (rel a `clinical_image`), `diagnostico_principal_id` (rel a `diagnosis`), `diagnosticos_diferenciales[]`, `plan`, `prescripcion_ids[]`, `seguimiento`, `proximo_control_fecha`, `proximo_control_motivo`, `reminder_ids[]` (rel a `reminders`), `estado` (en_curso, cerrado, en_revisión).
+`patient_id` (rel), `medico_id` (rel), `fecha`, `tipo` (presencial/virtual), `motivo_consulta`, `anamnesis`, `signos_vitales` (presión, FC, FR, temp, SatO2, peso, talla), `examen_fisico`, `imagenes[]` (rel a `clinical_image`), `diagnostico_principal_id` (rel a `diagnosis`), `diagnosticos_diferenciales[]`, `plan`, `prescripcion_ids[]`, `seguimiento`, `proximo_control_fecha`, `proximo_control_motivo`, `reminder_ids[]` (rel a `reminders`), `estado` (en_curso, cerrado, en_revisión), `location` (genérico §10.7; hereda de la primera imagen con coords, o se setea al cierre con coords del dispositivo del médico).
 
 > Los campos de seguimiento (`proximo_control_*`, `reminder_ids`) son **datos**, no código de TodoERP. El agente los completa al cerrar el episodio y crea los `reminders` correspondientes vía la *tool* genérica.
 
 ### 11.3 Diagnóstico
 
-`episode_id`, `tipo` (presuntivo/diferencial/definitivo), `codigo_cie10`, `descripcion`, `confianza` (0..1), `notas`, `revisado_por` (rel a supermédico), `aprobado_at`.
+`episode_id`, `tipo` (presuntivo/diferencial/definitivo), `codigo_cie10`, `descripcion`, `confianza` (0..1), `notas`, `revisado_por` (rel a supermédico), `aprobado_at`, `location` (genérico §10.7; hereda del episodio padre).
 
 ### 11.4 Imagen clínica (`clinical_image`)
 
@@ -517,6 +625,7 @@ Entidad lógica que envuelve una imagen subida al sistema y centraliza su clasif
 - `consentimiento_uso_imagen`: bool.
 - `classification_ids[]`: poblado automáticamente cuando el job de §10.4 termina; cada uno apunta a un registro en `entity_classifications`.
 - `embedding_status`: `pending | done | failed`.
+- `location` (genérico, §10.7): extraído de EXIF al subir; fallback al dispositivo o `clinic_default`.
 
 Búsqueda visual: el bot puede invocar `vectors.search` pasando un `clinical_image.id` y obtener IDs de imágenes similares en la base, respetando permisos.
 
@@ -560,11 +669,11 @@ Reglas del prompt del sistema:
 
 | Rol del usuario | Modo del bot | Comportamiento |
 |---|---|---|
-| Guest | Informativo público | Como `server.js` actual: orientación, agendamiento, sin persistencia |
-| Paciente | Autollenado guiado | Pregunta antecedentes, alergias, medicación; resume; pide consentimientos; agenda; mensajería con su médico |
-| Médico | Asistente clínico | Toma dictado del médico, extrae anamnesis/examen/diagnóstico, persiste en episodio activo, busca pacientes, sube imágenes |
-| Supermédico | Revisor | Resume episodios, lista pendientes de revisión, permite anotar/comentar, ver dashboards |
-| Admin | Soporte operativo | No accede a datos clínicos por defecto; ayuda con configuración, usuarios, traducciones |
+| Guest | Informativo público | Orientación dermatológica anónima, agendamiento, sin persistencia. **v1 desde día 1** (refactor del bot actual, D-Aux-6). |
+| Paciente | Autollenado guiado | Pregunta antecedentes, alergias, medicación; mensajería con su médico. **Diferible a v1.5/v2 (D-5/D-Aux-8).** |
+| Médico | Asistente clínico | Toma dictado del médico, extrae anamnesis/examen/diagnóstico, persiste en episodio activo, busca pacientes, sube imágenes, escala casos a colegas (CU-8). |
+| Supermédico | Revisor | Resume episodios, lista pendientes de revisión y de aprobación de break-glass, permite anotar/comentar. |
+| Admin | — | El admin **no usa el bot** (D-Aux-4); usa la UI de TodoERP. |
 
 ### 12.4 Contexto del paciente
 
@@ -603,7 +712,7 @@ Mantener el streaming SSE actual. Las *tool calls* **no** se streamean al usuari
 | `patient:read_own` | — | ✓ | — | ✓ | — |
 | `patient:read_assigned` | — | — | ✓ | ✓ | — |
 | `patient:read_all` | — | — | — | ✓ | — |
-| `patient:create` | — | — | ✓ | ✓ | ✓ |
+| `patient:create` | — | — | ✓ | ✓ | — |
 | `patient:update_own` | — | ✓ (campos limitados) | — | ✓ | — |
 | `patient:update_assigned` | — | — | ✓ | ✓ | — |
 | `episode:create` | — | — | ✓ | ✓ | — |
@@ -611,18 +720,29 @@ Mantener el streaming SSE actual. Las *tool calls* **no** se streamean al usuari
 | `episode:read_assigned` | — | — | ✓ | ✓ | — |
 | `episode:update_assigned` | — | — | ✓ | ✓ | — |
 | `episode:override` (sobrescribir trabajo de otro médico) | — | — | — | ✓ | — |
+| `episode:request_review` (escalar a colegas) | — | — | ✓ | ✓ | — |
 | `diagnosis:write` | — | — | ✓ | ✓ | — |
+| `diagnosis:set_definitive` (requiere evidencia AP adjunta, D-Aux-2) | — | — | ✓ | ✓ | — |
 | `diagnosis:approve` | — | — | — | ✓ | — |
 | `attachment:upload` | — | ✓ (su ficha) | ✓ | ✓ | — |
 | `attachment:read_clinical` | — | ✓ (suyas) | ✓ (asignadas) | ✓ (todas) | — |
 | `prescription:write` | — | — | ✓ | ✓ | — |
-| `chat:bot` (puede usar el bot) | ✓ (modo guest) | ✓ | ✓ | ✓ | ✓ (modo admin) |
-| `bot:audit:read` | — | — | — | ✓ | ✓ |
+| `chat:bot` (puede usar el bot) | ✓ (modo guest) | ✓ | ✓ | ✓ | — |
+| `bot:audit:read` | — | — | — | ✓ | ✓ (logs técnicos) |
 | `users:manage` | — | — | — | — | ✓ |
 | `roles:manage` | — | — | — | — | ✓ |
 | `forms:manage` | — | — | — | — | ✓ |
+| `models:manage` (modelos ISIC, embeddings) | — | — | — | — | ✓ |
+| `temporary_permissions:request_break_glass` (TTL ≤ 1h) | — | — | — | ✓ | ✓ (sobre clínicos) |
+| `temporary_permissions:request` (solicitud aprobada) | — | — | ✓ | ✓ | ✓ |
+| `temporary_permissions:approve` | — | — | — | ✓ | — |
+| `temporary_permissions:revoke` | — | — | — | ✓ | ✓ (las propias) |
 
-> *Asignación médico↔paciente*: campo `medico_principal_id` en paciente, **además** de relaciones por episodio (un médico que ha atendido un episodio gana lectura sobre ese episodio).
+**Notas clave:**
+- *Admin sin acceso clínico por defecto* (D-1): no aparece ✓ en ninguna fila `patient:*`, `episode:*`, `diagnosis:*`, `prescription:*`, `attachment:read_clinical`. Para acceso ad-hoc, usa break-glass (§13.5).
+- *Admin no usa el chat médico* (D-Aux-4): TodoERP es solo para él; no hay valor en darle `chat:bot`.
+- *Asignación médico↔paciente*: campo `medico_principal_id` en paciente + relaciones por episodio (un médico que atendió un episodio gana lectura sobre ese episodio).
+- *Diagnóstico definitivo* requiere evidencia anatomopatológica adjunta (D-Aux-2). Sin evidencia, el sistema lo deja como `presuntivo`.
 
 ### 13.2 Mecanismo de autorización
 
@@ -639,16 +759,89 @@ Mantener el streaming SSE actual. Las *tool calls* **no** se streamean al usuari
   - Consentimiento informado almacenado por paciente.
   - Derecho de acceso, rectificación, eliminación: el paciente puede pedir export/borrado.
   - Registro de tratamiento (qué se almacena, finalidad, base legal).
-- **Auditoría**: cada *tool call* del bot deja entrada en `chatter` con `created_by = bot:<user_id>`.
-- **Datos a LLMs externos**: el prompt nunca debe incluir cédula, dirección, teléfono, ni nombre completo si no es estrictamente necesario para la tarea. Pseudoanonimización en el prompt (e.g., "el paciente" en lugar del nombre).
-- **Retención**: definir política. Recomendación: episodios cerrados conservados 10 años (norma médica común); sesiones de bot crudas, 90 días con resumen permanente.
+- **Auditoría**: cada *tool call* del bot deja entrada en `chatter` con `created_by = bot:<user_id>`. Cada uso de break-glass deja entrada en chatter de la entidad accedida.
 
-> **Decisión abierta D-4:** ¿se manda data clínica a un LLM en la nube? Recomendación: sí, pero **pseudoanonimizada** y bajo acuerdo de procesamiento. Alternativa: LLM local (Ollama) si se requiere zero-egress.
+#### 13.3.1 Regla obligatoria de PII inbound vs outbound (D-4)
+
+- **Inbound** (usuario → bot → DB): el usuario puede mandar PII libremente (e.g., "mi cédula es 1234567890"). El LLM la ve **una vez** en el turno en que se teclea (necesario para extraer y persistir). Se almacena en el `data` JSONB del paciente.
+- **Outbound** (DB → contexto → LLM): cuando el agente carga datos del MCP para inyectar en el prompt, debe **redactar** los campos marcados `pii: true` en `definitions.describe`. Reemplazo por placeholder (e.g., `<PACIENTE>`, `<CEDULA_REDACTADA>`, `<TELEFONO_REDACTADO>`).
+- Implementación: paso obligatorio en `cepi-bot/src/agent.ts`, no skippeable, con tests que prueben que ningún campo `pii: true` aparece en el prompt enviado al LLM cuando viene de lectura.
+- Campos típicos `pii: true`: `nombre`, `apellidos`, `cedula`, `email`, `telefono`, `direccion`, `fecha_nac`. Diagnóstico, anamnesis, examen físico **no** son PII en este sentido (son contenido clínico necesario para el razonamiento).
+
+- **Retención**: episodios cerrados conservados 10 años (norma médica común); sesiones de bot crudas, 90 días con resumen permanente.
 
 ### 13.4 Rate limiting y abuso
 
 - En el endpoint de chat, por usuario: N mensajes/min (configurable).
 - Para guest: límites más estrictos (ya hay precedente en server.js actual).
+
+### 13.5 Permisos temporales (break-glass) — capacidad genérica
+
+Mecanismo para otorgar acceso puntual y auditado a recursos que normalmente están fuera del alcance del usuario. **Genérico**: aplica a cualquier permiso del sistema, no solo a entidades clínicas.
+
+**Schema** (nueva tabla en TodoERP):
+
+```sql
+CREATE TABLE temporary_permissions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    granted_to      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    granted_by      UUID REFERENCES users(id) ON DELETE SET NULL,  -- NULL si fue self-serve break-glass
+    permission      VARCHAR(255) NOT NULL,                          -- ej. 'patient:read_all', 'patient:read'
+    scope_entity_id UUID REFERENCES entities(id) ON DELETE CASCADE, -- opcional: restringe a UNA entidad
+    reason          TEXT NOT NULL,                                  -- justificación obligatoria
+    requested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_at      TIMESTAMPTZ,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    revoked_at      TIMESTAMPTZ,
+    status          VARCHAR(50) NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','active','expired','revoked','denied')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_temp_perm_granted_to_active ON temporary_permissions(granted_to)
+    WHERE status='active' AND expires_at > NOW();
+```
+
+**Dos modos:**
+
+1. **Self-serve break-glass** (TTL ≤ 1h, scope acotado a 1 entidad):
+   - Usuario solicita justificando.
+   - Si está dentro de los límites permitidos por su rol, se concede automáticamente (`status='active'`).
+   - Recordatorio inmediato al supermédico (`reminders.create`, canal `in_app` + `email`): "X accedió a Y, motivo Z".
+   - Cada lectura usando este permiso escribe entrada en `chatter` de la entidad accedida con `actor=X via break-glass`.
+
+2. **Solicitud aprobada** (TTL >1h o scope amplio):
+   - Queda en `status='pending'` hasta que el supermédico apruebe o rechace.
+   - Aprobación: `status='active'`, recordatorio al solicitante.
+   - Rechazo: `status='denied'`, comentario opcional del supermédico.
+
+**Integración:**
+- `verifyToken` (TodoERP `authMiddleware.ts`) carga permisos efectivos = permisos del rol ∪ permisos temporales activos del usuario.
+- Caché TTL 30s actual se invalida al otorgar/revocar.
+- Job pg-boss cada 60s marca `status='expired'` los vencidos.
+- UI: vista "Accesos temporales" en TodoERP — quién pidió qué, cuándo, justificación, qué leyó después (ligado al chatter). Por defecto en el dashboard del supermédico.
+
+**Tools MCP genéricas** (también en §8.2):
+- `permissions.request_temporary({ permission, scope_entity_id?, reason, duration_seconds })` → modo (1) o (2) según límites del rol del solicitante.
+- `permissions.approve_temporary(id)` (supermédico).
+- `permissions.deny_temporary(id, comment?)` (supermédico).
+- `permissions.revoke_temporary(id)` (supermédico, granter, o el propio granted_to).
+- `permissions.list_active_temporary({ user_id? })`.
+
+**Permisos sobre el sistema temporal:** ver matriz §13.1.
+
+### 13.6 Escalación entre médicos — capacidad genérica
+
+Acción explícita del médico para que un caso lo revisen colegas. **Nunca automática**: la decisión de escalar es del médico humano (D-Aux-1, D-Aux-3).
+
+- Tool y endpoint: `entities.request_review(entity_id, { reviewers: [user_id, ...], reason, due_at? })`.
+- Efectos:
+  - Crea `reminders` para cada reviewer (canal `in_app` + `email`), referenciando la entidad.
+  - Cambia el campo `estado` (configurable por slug; default `en_revisión_solicitada`).
+  - Anota en `chatter` de la entidad: "Escalado por X a [Y, Z]. Motivo: …".
+  - Cuando un reviewer comenta o agrega entidad-hija (e.g., un `diagnosis` diferencial), notifica al solicitante.
+- **Genérico**: el ID de la tool no menciona dominio médico; sirve para escalar facturas dudosas, tickets, contratos, etc.
+- En el contexto médico: el médico escala un episodio a un colega o al supermédico cuando duda del diagnóstico (con o sin sugerencia de la IA).
 
 ---
 
@@ -702,16 +895,32 @@ Como hoy: árbol de decisión en `tree.js`, sin persistencia. Al final, oferta d
 2. Agrega el campo en `form_configs` del entity_definition `patient`.
 3. El bot, en su próximo turno, lee `definitions.describe('patient')` y descubre el nuevo slot. Empieza a preguntarlo cuando proceda. **Sin redeploy del bot ni del MCP**.
 
-### CU-6 — Clasificación automática de imagen y casos similares
+### CU-6 — Sugerencia IA sobre imagen y casos similares
 
 1. Médico sube foto de una lesión sospechosa durante CU-1.
-2. Backend crea `clinical_image` y encola job de clasificación.
-3. Job llama al servicio Python (modelo ISIC). Recibe embedding de 1024 dims y top-5 labels (e.g., `[melanoma:0.62, nevus_atípico:0.24, ...]`).
-4. Job llama `vectors.upsert(<image_id>, 'image', embedding, 'isic-resnet50-v1')` y `classifications.set(<image_id>, 'isic-resnet50-v1', { labels: [...], confidence: 0.62 })`.
-5. Como `melanoma >= 0.5`, el sistema crea automáticamente un `reminders` para el supermédico con `priority='alta'` y referencia al episodio.
-6. Bot, al continuar la consulta, le dice al médico: *"El clasificador ISIC sugiere melanoma con confianza media (62%). ¿Quieres ver casos similares en la base?"*.
-7. Si médico acepta, bot llama `vectors.search({ entity_id: <image_id>, model_id: 'isic-resnet50-v1', k: 8 })`. Devuelve thumbnails y, si el médico no tiene permiso para ver al paciente original, anonimiza.
-8. Médico revisa, hace su propio diagnóstico y lo registra (CU-1 paso 10). El sistema **nunca** persiste la predicción del modelo como diagnóstico.
+2. Backend crea `clinical_image` y encola job de clasificación. **El sistema no bloquea**: la consulta sigue. La sugerencia llega cuando esté lista (segundos a minutos).
+3. Job llama al servicio Python (modelo ISIC, local). Recibe embedding 1024 dims + clasificaciones binaria y multiclase.
+4. Job persiste vía `vectors.upsert` y dos `classifications.set` (triage binario + multiclase).
+5. UI del médico marca la imagen con badge "Sugerencia IA disponible". El médico, cuando le interese, abre el detalle.
+6. Bot, si está en la conversación cuando la sugerencia llega, lo menciona claramente etiquetado: *"Sugerencia del modelo ISIC (informativa): triage 0.62 sospecha alta; top clases: melanoma 0.62 / nevus atípico 0.24 / BCC 0.08. ¿Quieres ver casos similares?"*.
+7. Si médico acepta, bot llama `vectors.search({ entity_id: <image_id>, model_id: 'isic-resnet50-v1', k: 8 })`. Devuelve thumbnails; si el médico no tiene permiso para ver al paciente original, los resultados se anonimizan (modo "caso académico").
+8. Médico revisa, **decide si escalar a colegas (CU-8)** o registra su propio diagnóstico (CU-1 paso 10). El sistema **nunca** persiste la predicción del modelo como diagnóstico.
+
+### CU-8 — Escalación a colegas para revisión
+
+1. Médico tiene un caso difícil (sospecha de melanoma o lesión rara, con o sin sugerencia IA).
+2. En el episodio, ejecuta acción "Solicitar revisión" → selecciona destinatarios (1+ colegas, supermédico, o "todos los médicos activos") y escribe motivo.
+3. Bot llama `entities.request_review(<episode_id>, { reviewers: [<medico1>, <medico2>], reason: "Sospecha melanoma, IA 0.62. Margen mal definido. Pido segunda opinión." })`.
+4. Sistema:
+   - Crea `reminders` para cada reviewer (canal `in_app` + `email`), cada uno con link al episodio.
+   - Cambia `episode.estado` a `en_revisión_solicitada`.
+   - Anota en `chatter`: "Escalado por X a [Y, Z]. Motivo: …".
+5. Reviewers ven el caso en su bandeja. Cada uno puede:
+   - Comentar en el chatter del episodio.
+   - Crear un `diagnosis` adicional (e.g., diferencial).
+   - Agregar nota.
+6. Cuando un reviewer interactúa, el solicitante recibe notificación.
+7. El médico solicitante decide qué hacer con las opiniones recibidas. Cierra la revisión cuando le basta.
 
 ### CU-7 — Seguimiento longitudinal de un paciente crónico
 
@@ -741,19 +950,32 @@ Orden propuesto. Cada fase es desplegable y testeable.
 
 > Las fases marcadas con **[TodoERP genérico]** se diseñan e implementan **sin** referencia al dominio médico. Las marcadas con **[médico]** consumen lo genérico.
 
-### Fase 1 — Capacidades genéricas en TodoERP (5-7 días) [TodoERP genérico]
+### Fase 1 — Capacidades genéricas en TodoERP (8-10 días) [TodoERP genérico]
 **1A — Sistema de alertas/recordatorios**
-- Schema `reminders` (§9.2), drivers de canal (`in_app`, `email`).
+- Schema `reminders` (§9.2), drivers `in_app` y `email` (Brevo).
 - Scheduler interno (process pull cada N segundos).
 - API REST `/api/reminders` y permisos `reminders:*`.
+- Cola subyacente: **pg-boss** (cero infra extra).
 - Tests: creación, disparo, snooze, cancelación, recurrencia básica.
 
 **1B — Vector store + classifications**
 - Habilitar extensión `pgvector` en init script.
 - Schemas `models_registry`, `vector_embeddings`, `entity_classifications` (§10.2).
 - API REST `/api/vectors` y `/api/classifications` y permisos correspondientes.
-- Cola de jobs (BullMQ con Redis o pg-boss).
 - Tests: upsert + búsqueda k-NN, set/get clasificación.
+
+**1C — Permisos temporales (break-glass)**
+- Schema `temporary_permissions` (§13.5).
+- `verifyToken` integra permisos temporales activos (no expirados, no revocados).
+- Tools y endpoints `permissions.request_temporary` / `approve` / `revoke` / `list_active`.
+- Job pg-boss expira cada minuto; dispara recordatorio al supermédico cada vez que un break-glass se activa.
+- Auditoría: cada lectura usando un permiso temporal escribe en `chatter` de la entidad accedida.
+
+**1D — Acción genérica de revisión**
+- Tool y endpoint `entities.request_review(entity_id, { reviewers[], reason, due_at? })`.
+- Cambia estado de la entidad (campo configurable por slug; default: `estado: 'en_revisión_solicitada'`).
+- Crea `reminders` para cada reviewer.
+- Notifica al solicitante cuando un reviewer comenta o agrega entidad-hija (e.g., `diagnosis` diferencial).
 
 ### Fase 2 — Servidor MCP de TodoERP (5-7 días) [TodoERP genérico]
 - Carpeta `TodoERP/mcp/` con `@modelcontextprotocol/sdk`.
@@ -762,12 +984,13 @@ Orden propuesto. Cada fase es desplegable y testeable.
 - Tests: cada tool valida permisos, respeta schema, audita.
 - Validación: usar el MCP para gestionar entidades **no médicas** (e.g., facturas) sin un solo cambio de código.
 
-### Fase 3 — Modelo clínico (3-5 días) [médico — datos sobre genérico]
-- Definir `entity_definitions`: `patient`, `episode`, `diagnosis`, `prescription`, `clinical_image`, `lab_order`, `bot_session`.
-- Seed `004_medical_seed.sql`.
-- Roles `guest`, `paciente`, `medico`, `supermedico`, `admin`. Sus permisos se construyen sobre los recursos genéricos: `patient:read_assigned` es un permiso registrado contra el slug `patient`, no una tabla nueva.
-- Formularios dinámicos básicos (vista CRUD admin del médico) usando `DynamicFormRenderer.vue`.
-- Tests: CRUD por rol respeta matriz.
+### Fase 3 — Modelo clínico + seeder ficticio (5-7 días) [médico — datos sobre genérico]
+- Definir `entity_definitions`: `patient`, `episode`, `diagnosis`, `prescription`, `clinical_image`, `lab_order`, `bot_session`, `consent`, `icd10_code`.
+- Seed `medical-seed/004_medical_seed.sql`: roles, permisos, definiciones, modelos en `models_registry`.
+- **Seeder ficticio** `medical-seed/seeder/run.js`: ~50 pacientes, ~150 episodios, descarga lazy ~200 imágenes HAM10000 (D-15) con clasificaciones simuladas a partir de la etiqueta ground truth + ruido. ~5-10 bot sessions de ejemplo. Recordatorios distribuidos (vencidos/pendientes/completados).
+- Formularios dinámicos básicos en TodoERP admin para que el admin pueda inspeccionar/exportar.
+- Roles `guest`, `paciente`, `medico`, `supermedico`, `admin` con permisos construidos sobre recursos genéricos (admin **sin** acceso clínico, ver D-1).
+- Tests: CRUD por rol respeta matriz; seeder corre idempotente; admin no puede leer `patient` por defecto y necesita break-glass para hacerlo.
 
 ### Fase 4 — Agente médico (7-10 días) [médico]
 - Refactor de `backend/server.js` actual a `cepi-bot/`:
@@ -795,8 +1018,11 @@ Orden propuesto. Cada fase es desplegable y testeable.
 - Bot integra "casos similares" (`vectors.search`) y muestra clasificación al médico como sugerencia.
 - Pruebas con dataset HAM10000 / ISIC público.
 
-### Fase 7 — Modo paciente y portal (1 semana) [médico]
+### Fase 7 — Modo paciente y portal (1 semana) [médico — **diferible a v1.5/v2**]
+> Por D-5/D-Aux-8: el modo paciente autenticado es **feature secundaria**. Se construye solo si hay tracción en v1; si no, se difiere. El modo guest (anónimo) sí está en v1.
+
 - Frontend de paciente con su ficha y mensajería con el bot.
+- Magic link por email para login (sin contraseñas).
 - Bot pregunta antecedentes/alergias.
 - Consentimientos LOPDP visibles y firmables (entidad `consent`).
 - Agendamiento integrado con el flujo actual de "cita".
@@ -847,24 +1073,41 @@ Orden propuesto. Cada fase es desplegable y testeable.
 
 ---
 
-## 18. Decisiones abiertas
+## 18. Decisiones cerradas (cuestionario inicial 2026-05-06)
 
-| ID | Decisión | Recomendación |
+Todas las decisiones estratégicas v1 han sido resueltas. Las **D-Aux** son nuevas decisiones surgidas durante el cuestionario.
+
+| ID | Decisión | Resolución |
 |---|---|---|
-| D-1 | ¿Admin lee datos clínicos? | No por defecto, override con permiso explícito y auditado |
-| D-2 | Campos obligatorios al crear paciente | `nombre` + `cedula` o `email`; resto incremental |
-| D-3 | LLM principal | DeepSeek v1, abstraído tras interfaz; reservar opción local |
-| D-4 | Datos clínicos al LLM externo | Sí, pseudoanonimizados |
-| D-5 | ¿El bot habla con el paciente sin médico de por medio? | Sí, en modo paciente, pero solo para autollenado y consultas no clínicas; nada de diagnóstico |
-| D-6 | ¿Almacenar grabaciones de voz si se agrega dictado? | No en v1 |
-| D-7 | Vademécum / catálogo de medicamentos | Texto libre v1; dataset estructurado en una fase posterior |
-| D-8 | ¿Multi-tenant (varias clínicas en una instancia)? | Single-tenant CEPI v1; multi-tenant si se vende como producto |
-| D-9 | Canales de recordatorios habilitados en v1 | `in_app` siempre; `email` opcional; `push` y `webhook` v2 |
-| D-10 | Modelo de imagen on-prem o servicio externo | On-prem con modelo open-source liviano; subir a gestionado solo si la calidad no alcanza |
-| D-11 | Tareas de clasificación priorizadas | Triage binario "sospecha alta / no" + multiclase top-5 informativo |
-| D-12 | Cola de jobs (BullMQ vs pg-boss) | pg-boss si queremos cero infra extra (usa Postgres); BullMQ si ya hay Redis |
-| D-13 | ¿Lesiones siguen un mismo `lesion_id` en el tiempo? | Sí, opcional; útil para series longitudinales y comparación de imágenes |
-| D-14 | Umbral de confianza para escalación automática a supermédico | 0.5 sobre clases críticas (melanoma, BCC, SCC) — calibrar con datos reales |
+| D-1 | Acceso del admin a datos clínicos | **Sin acceso clínico por defecto.** Sistema "break-glass" self-serve (TTL 1h, justificación obligatoria, audit en chatter) + solicitud aprobada del supermédico para casos ampliados. Ver §13.5. |
+| D-2 | Campos obligatorios al crear paciente | `nombre` + (`cedula` o `email`). Resto incremental por chat. |
+| D-3 | LLM principal | **Claude** (Sonnet 4.6 producción, Haiku 4.5 tareas auxiliares). Abstraído tras interfaz `LLMProvider` para poder cambiar. |
+| D-4 | Datos clínicos al LLM externo | **PII inbound permitida** (el LLM ve lo que el usuario teclea), **PII outbound prohibida** (al releer del MCP, el agente redacta nombre/cédula/dirección/teléfono antes de inyectar al prompt). Regla obligatoria en Fase 4. |
+| D-5 | Bot conversa con paciente sin médico | Solo en modo paciente autenticado (magic link). Bot ayuda con autollenado y consultas no clínicas; **no emite opinión clínica**. Modo paciente es **feature secundaria**, posiblemente diferida a v1.5/v2. |
+| D-6 | Grabaciones de voz si se agrega dictado | No en v1. |
+| D-7 | Vademécum / catálogo de medicamentos | Texto libre en v1; dataset estructurado en v2 como `entity_definition` "medication". |
+| D-8 | Multi-tenant | **Single-tenant** v1. **Hito v2**: agregar `tenant_id` antes de comercializar a otras clínicas. El modelo polimórfico lo permite sin reescritura. |
+| D-9 | Canales de recordatorios v1 | `in_app` (siempre) + `email` (Brevo, free tier 300/día). Push y webhook a v2. |
+| D-10 | Modelo de imagen on-prem o gestionado | **Local** con GPU/CPU **configurable** (servicio Python detecta CUDA al boot). Abstracción `ClassifierProvider` permite externalizar después si conviene. |
+| D-11 | Tareas de clasificación priorizadas | **Ambas:** triage binario (score 0..1 sospecha) + multiclase top-5 (HAM10000). Las dos puramente informativas para el médico. |
+| D-12 | Cola de jobs | **pg-boss** (sobre Postgres, cero infra extra). |
+| D-13 | `lesion_id` longitudinal | Sí, opcional. Asignable manualmente desde editor de imagen para series sucesivas de la misma lesión. |
+| ~~D-14~~ | ~~Umbral confianza escalación automática~~ | **Descartada.** Nada se escala automáticamente. La escalación entre médicos es **acción explícita**. Ver §13.6. |
+| D-15 | Imágenes del seeder | Descarga lazy desde ISIC Archive (HAM10000 subset, ~200 imágenes), caché en `medical-seed/cache/` gitignored. Licencia CC BY-NC-SA → solo dev. |
+| **D-Aux-1** | Tiempo real vs certeza | **Certeza es prioridad**, tiempo real no. Cola de clasificación puede tomar minutos. La IA es estrictamente sugerente; nada determinante salvo evidencia anatomopatológica. |
+| **D-Aux-2** | Diagnóstico definitivo | Solo cuando hay `evidencia_definitiva_attachment_id` (biopsia, dermatopatología) adjunto. Sin evidencia, queda en `presuntivo` o `diferencial`. |
+| **D-Aux-3** | Escalación entre médicos | Acción explícita `entities.request_review(entity_id, { reviewers[], reason, due_at? })` — capacidad **genérica** de TodoERP, sirve para cualquier entidad. Ver §8.2 + CU-8. |
+| **D-Aux-4** | TodoERP es exclusivamente para admin | Médicos, supermédicos, pacientes y guests **no usan TodoERP**. Operan en frontend médico unificado (`D:\cepi\frontend`). |
+| **D-Aux-5** | Frontend médico | **Una sola app** con modos por rol. Comparte componentes y bundle; UI condicional según permisos del backend. |
+| **D-Aux-6** | Bot guest actual (`server.js` + `tree.js`) | **Refactor desde día 1**, sin compatibilidad. No está en producción. |
+| **D-Aux-7** | Especialidad | **Híbrido**: optimizado para dermatología hoy; `entity_definitions` y prompts diseñados de modo que extender a otras especialidades sea seed nuevo, no refactor. |
+| **D-Aux-8** | Autenticación del paciente | **Magic link por email** (modo paciente es secundario). |
+| **D-Aux-9** | Email provider | **Brevo** (free 300/día). Abstracción `EmailChannel` permite migrar. |
+| **D-Aux-10** | Idiomas v1 | Español. i18n de TodoERP soporta más; activar inglés cuando lleguen extranjeros. |
+| **D-Aux-11** | Backups | `pg_dump` diario (retención 30d) + dump semanal full (retención 1 año). Vectores incluidos. |
+| **D-Aux-12** | Logs | `pino` JSON estructurado, rotación diaria, nivel `info` prod / `debug` dev. |
+| **D-Aux-13** | Volumen v1 | ~100 pacientes en 6 meses. No optimizar prematuramente. |
+| **D-Aux-14** | Permisos temporales (break-glass) | Capacidad **genérica** nueva en TodoERP. Tabla `temporary_permissions` con TTL, justificación, auditoría. Ver §13.5. |
 
 ---
 
@@ -886,6 +1129,12 @@ Orden propuesto. Cada fase es desplegable y testeable.
 - **RRULE** — sintaxis de recurrencia del estándar iCalendar (RFC 5545); usada en `reminders.recurrence`.
 - **Tool-use / function calling** — capacidad de un LLM de emitir llamadas estructuradas a funciones/tools en lugar de solo texto.
 - **Slug (TodoERP)** — identificador corto en minúsculas/snake_case para una `entity_definition` (`patient`, `episode`, etc.).
+- **Brevo** — proveedor de email transaccional (antes Sendinblue). Free tier 300 mails/día.
+- **pg-boss** — librería Node.js de jobs/cola sobre PostgreSQL; usada como cola interna sin Redis.
+- **Magic link** — autenticación sin contraseña: el usuario recibe por email un enlace único de un solo uso que lo autentica al abrir.
+- **Break-glass** — concepto operativo: acceso de emergencia a un recurso normalmente vedado, con justificación obligatoria, TTL corto, y auditoría exhaustiva. Ver §13.5.
+- **PII** — Personally Identifiable Information. Datos que identifican unívocamente a una persona (nombre, cédula, teléfono, dirección, email).
+- **PII inbound vs outbound** — regla operativa del agente: el usuario puede mandar PII al bot (entra una vez al LLM); pero al releer datos del MCP, el agente las redacta antes del prompt. Ver §13.3.1.
 
 ---
 
@@ -1058,4 +1307,12 @@ Anotado: placa eritematodescamativa, 4 cm, codo, asintomática.
 
 ---
 
-**Fin del documento.** Próximo paso: revisión y resolución de decisiones abiertas (D-1 a D-14) antes de iniciar Fase 0.
+**Fin del documento.**
+
+**Estado actual (2026-05-06):** decisiones D-1 a D-15 + D-Aux-1 a D-Aux-14 **resueltas** en cuestionario inicial. Listos para iniciar Fase 0.
+
+**Próximos pasos:**
+1. Limpieza del repo raíz (carpetas espurias `D:cepibackend`, etc.).
+2. Levantar TodoERP local con Postgres + `pgcrypto` + `pgvector`.
+3. Crear rama `feat/medical-assistant`.
+4. Empezar Fase 1 (capacidades genéricas: alertas + vector + break-glass + revisión).
