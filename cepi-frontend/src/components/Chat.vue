@@ -31,6 +31,8 @@
         <button @click="send('episodios')"    :disabled="busy">episodios</button>
         <button @click="send('diagnósticos')" :disabled="busy">diagnósticos</button>
         <button @click="send('cie10 melanoma')" :disabled="busy">cie10 melanoma</button>
+        <button @click="send('ver paciente')"   :disabled="busy || !activePatient">ver paciente</button>
+        <button @click="send('ver episodio')"   :disabled="busy || !activeEpisode">ver episodio</button>
       </div>
     </aside>
 

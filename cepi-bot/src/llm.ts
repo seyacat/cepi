@@ -140,6 +140,23 @@ export class StubLLMAdapter implements LLMAdapter {
     if (has('diagnosticos', 'diagnósticos', 'diagnoses')) {
       return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '13000000-0000-0000-0000-000000000000', limit: 20 } } };
     }
+    // "ver paciente" / "ver episodio" — uses the active context injected as
+    // a system message earlier in this turn.
+    const stateNote = history.find(t => t.role === 'system' && /paciente=([0-9a-f-]{36})/.test(t.content || ''));
+    const epNote    = history.find(t => t.role === 'system' && /episodio=([0-9a-f-]{36})/.test(t.content || ''));
+    if (has('ver paciente') || /^\s*\/?ver\s+paciente\s*$/i.test(msg)) {
+      const m = stateNote?.content?.match(/paciente=([0-9a-f-]{36})/);
+      const pid = m?.[1];
+      if (pid) return { kind: 'tool_call', tool: { name: 'entities.get', args: { id: pid } } };
+      return { kind: 'message', text: 'No hay paciente activo. Usa "activar paciente <uuid>" primero.' };
+    }
+    if (has('ver episodio') || /^\s*\/?ver\s+episodio\s*$/i.test(msg)) {
+      const m = epNote?.content?.match(/episodio=([0-9a-f-]{36})/);
+      const eid = m?.[1];
+      if (eid) return { kind: 'tool_call', tool: { name: 'entities.get', args: { id: eid } } };
+      return { kind: 'message', text: 'No hay episodio activo. Usa "activar episodio <uuid>" o "nuevo episodio …" primero.' };
+    }
+
     // CIE-10 catalog search: "cie10 melanoma", "código psoriasis"
     const cieMatch = msg.match(/^\s*(?:cie[- ]?10|c[óo]digo|icd[- ]?10)\s*[:]?\s*(.+)$/i);
     if (cieMatch) {
