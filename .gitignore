@@ -30,3 +30,11 @@ Thumbs.db
 frontend/public/icon-192.png
 frontend/public/icon-512.png
 frontend/generate-icons.mjs
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Paper build artifacts (rendered from docs/PAPER.md)
+docs/PAPER.html
+docs/PAPER.pdf
