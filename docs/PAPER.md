@@ -589,13 +589,17 @@ Todas las entidades viven como `entity_definitions` (slug + config) y registros 
 
 | `slug` | Prefijo UUID | Descripción |
 |---|---|---|
-| `patient` | `m1000000-…` | Paciente |
-| `episode` | `m2000000-…` | Episodio / consulta |
-| `diagnosis` | `m3000000-…` | Diagnóstico (puede haber 1..N por episodio: presuntivo, diferencial, definitivo) |
-| `prescription` | `m4000000-…` | Prescripción |
-| `lab_order` | `m5000000-…` | Orden de laboratorio / examen complementario |
-| `clinical_image` | `m6000000-…` | Foto clínica (registro lógico; el binario va en `attachments`) |
-| `bot_session` | `m7000000-…` | Sesión de chat (turnos, slots, paciente activo) |
+| `patient` | `11000000-…` | Paciente |
+| `episode` | `12000000-…` | Episodio / consulta |
+| `diagnosis` | `13000000-…` | Diagnóstico (puede haber 1..N por episodio: presuntivo, diferencial, definitivo) |
+| `prescription` | `14000000-…` | Prescripción |
+| `lab_order` | `15000000-…` | Orden de laboratorio / examen complementario |
+| `clinical_image` | `16000000-…` | Foto clínica (registro lógico; el binario va en `attachments`) |
+| `bot_session` | `17000000-…` | Sesión de chat (turnos, slots, paciente activo) |
+| `consent` | `18000000-…` | Consentimiento informado del paciente (LOPDP, imagen, etc.) |
+| `icd10_code` | `19000000-…` | Catálogo CIE-10 (datos, no código) |
+
+> Los prefijos `m1..m9` originalmente propuestos no son hex válido para UUID; el seed de Fase 3 usa `11..19` para conservar el ancla visual sin violar el formato.
 
 ### 11.1 Paciente — campos sugeridos (`data` JSONB)
 
