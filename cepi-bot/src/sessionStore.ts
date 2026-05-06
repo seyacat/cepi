@@ -15,6 +15,19 @@ import { ChatTurn } from './llm.js';
 
 const BOT_SESSION_ENTITY_ID = '17000000-0000-0000-0000-000000000000';
 
+/** A pending action awaits user confirmation before it persists. */
+export interface PendingAction {
+  /** Friendly summary shown to the user. */
+  summary: string;
+  /** MCP tool to invoke on confirm. */
+  tool: string;
+  args: Record<string, unknown>;
+  /** What the bot says on success. {{id}} is replaced by the new entity id. */
+  successMessage: string;
+  /** ISO timestamp; server may expire after some time (not enforced yet). */
+  createdAt: string;
+}
+
 export interface BotSession {
   id: string;
   user_id: string | null;
@@ -25,6 +38,8 @@ export interface BotSession {
   pending_slots: string[];
   tool_calls: Array<{ name: string; args: any; ok: boolean; t: string }>;
   estado: 'abierta' | 'cerrada' | 'abandonada';
+  /** R-style confirmation gate: present means "the bot is waiting for sí/no". */
+  pending_action: PendingAction | null;
 }
 
 export function emptySession(userId: string | null = null): Omit<BotSession, 'id'> {
@@ -37,6 +52,7 @@ export function emptySession(userId: string | null = null): Omit<BotSession, 'id
     pending_slots: [],
     tool_calls: [],
     estado: 'abierta',
+    pending_action: null,
   };
 }
 
@@ -52,6 +68,7 @@ function toPersistedShape(s: Omit<BotSession, 'id'>): Record<string, unknown> {
     pending_slots:     JSON.stringify(s.pending_slots ?? []),
     tool_calls:        JSON.stringify(s.tool_calls ?? []),
     estado:            s.estado,
+    pending_action:    JSON.stringify(s.pending_action ?? null),
   };
 }
 
@@ -92,6 +109,7 @@ export async function loadSession(
     pending_slots:     safeParseJson<string[]>(d.pending_slots, []),
     tool_calls:        safeParseJson<BotSession['tool_calls']>(d.tool_calls, []),
     estado:            (d.estado as BotSession['estado']) || 'abierta',
+    pending_action:    safeParseJson<BotSession['pending_action']>(d.pending_action, null),
   };
 }
 

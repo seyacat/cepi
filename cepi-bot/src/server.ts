@@ -155,29 +155,85 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       activePatientId = session.active_patient_id;
       activeEpisodeId = session.active_episode_id;
 
-      // ── Auto-link attachment to a clinical_image when context allows ──
-      // Marker emitted by the frontend uploader: "[adjunto: name · uuid]".
+      // ── Confirmation gate: handle "sí/no" against a pending_action ────
+      const confirmYes = /^\s*(s[ií]|si|confirmar|ok|adelante|yes)\s*$/i;
+      const confirmNo  = /^\s*(no|cancelar|cancel|abort)\s*$/i;
+      if (session.pending_action) {
+        if (confirmYes.test(message.trim())) {
+          const pa = session.pending_action;
+          const result = await mcp.call(pa.tool, pa.args);
+          const newId  = result.ok ? (result.data?.id || '') : '';
+          const ackText = result.ok
+            ? pa.successMessage.replace(/\{\{id\}\}/g, newId)
+            : `No pude completar la acción: ${result.error}`;
+          session.pending_action = null;
+          session.turns = [
+            ...session.turns,
+            { role: 'user',      content: message },
+            { role: 'assistant', content: ackText },
+          ];
+          await saveSession(mcp, session);
+          return res.json({
+            ok: true, session_id: sessionId, text: ackText,
+            history: session.turns,
+            toolCalls: [{ name: pa.tool, args: pa.args, result }],
+            active_patient_id: activePatientId,
+            active_episode_id: activeEpisodeId,
+          });
+        }
+        if (confirmNo.test(message.trim())) {
+          session.pending_action = null;
+          const ackText = 'Acción cancelada.';
+          session.turns = [
+            ...session.turns,
+            { role: 'user',      content: message },
+            { role: 'assistant', content: ackText },
+          ];
+          await saveSession(mcp, session);
+          return res.json({
+            ok: true, session_id: sessionId, text: ackText,
+            history: session.turns, toolCalls: [],
+            active_patient_id: activePatientId,
+            active_episode_id: activeEpisodeId,
+          });
+        }
+        // Other input while a pending_action exists: keep the pending; the
+        // LLM still sees state context, but user might be reconsidering.
+        // Fall through to the normal LLM path below.
+      }
+
+      // ── Auto-stage clinical_image creation behind confirmation gate ──
       const attachMatch = message.match(/\[adjunto:\s*([^·]+)·\s*([0-9a-f-]{36})\s*\]/i);
       if (attachMatch && activePatientId && activeEpisodeId) {
         const fileName     = attachMatch[1].trim();
         const attachmentId = attachMatch[2];
-        const create = await mcp.call('entities.create', {
-          record_type: 'business',
-          entity_id:   '16000000-0000-0000-0000-000000000000',  // clinical_image
-          title:       `clinical_image_${fileName}`,
-          data: {
-            ['12000000-0000-0000-0000-000000000000:episode_id']: activeEpisodeId,
-            ['11000000-0000-0000-0000-000000000000:patient_id']: activePatientId,
-            attachment_id: attachmentId,
-            field_key:     'lesion',
-            consentimiento_uso_imagen: true,
-            embedding_status: 'pending',
+        session.pending_action = {
+          summary: `Crear clinical_image '${fileName}' ligada al episodio ${activeEpisodeId}`,
+          tool: 'entities.create',
+          args: {
+            record_type: 'business',
+            entity_id:   '16000000-0000-0000-0000-000000000000',
+            title:       `clinical_image_${fileName}`,
+            data: {
+              ['12000000-0000-0000-0000-000000000000:episode_id']: activeEpisodeId,
+              ['11000000-0000-0000-0000-000000000000:patient_id']: activePatientId,
+              attachment_id: attachmentId,
+              field_key:     'lesion',
+              consentimiento_uso_imagen: true,
+              embedding_status: 'pending',
+            },
           },
-        });
-        const newId = create.ok ? create.data?.id : null;
-        const ackText = create.ok
-          ? `Imagen registrada como clinical_image (id: ${newId}) ligada al episodio activo.`
-          : `No pude registrar la imagen: ${create.error}`;
+          successMessage: `Imagen registrada como clinical_image (id: {{id}}) ligada al episodio activo.`,
+          createdAt: new Date().toISOString(),
+        };
+        const ackText =
+          `Voy a crear una imagen clínica con estos datos:\n` +
+          `  • episodio: ${activeEpisodeId}\n` +
+          `  • paciente: ${activePatientId}\n` +
+          `  • attachment: ${attachmentId}\n` +
+          `  • field_key: lesion\n` +
+          `  • consentimiento_uso_imagen: true\n\n` +
+          `¿Confirmas? (sí / no)`;
         session.turns = [
           ...session.turns,
           { role: 'user',      content: message },
@@ -186,8 +242,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         await saveSession(mcp, session);
         return res.json({
           ok: true, session_id: sessionId, text: ackText,
-          history: session.turns,
-          toolCalls: [{ name: 'entities.create', args: {}, result: create }],
+          history: session.turns, toolCalls: [],
           active_patient_id: activePatientId,
           active_episode_id: activeEpisodeId,
         });
