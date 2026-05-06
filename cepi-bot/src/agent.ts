@@ -41,7 +41,7 @@ export interface AgentTurnOutput {
 }
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutput> {
-  const llm = input.llm || getLLMAdapter();
+  const llm = input.llm || await getLLMAdapter();
 
   // 1. Ensure we have an MCP client connected as the caller.
   let mcp = input.mcp;

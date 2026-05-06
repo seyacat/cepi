@@ -96,7 +96,12 @@ export class StubLLMAdapter implements LLMAdapter {
   }
 }
 
-export function getLLMAdapter(): LLMAdapter {
-  // Future: read CEPI_LLM_PROVIDER env and pick.
+/** Async because real adapters live in side modules to keep tests fast. */
+export async function getLLMAdapter(): Promise<LLMAdapter> {
+  const provider = (process.env.CEPI_LLM_PROVIDER || 'stub').toLowerCase();
+  if (provider === 'deepseek') {
+    const mod = await import('./llmDeepSeek.js');
+    return new mod.DeepSeekLLMAdapter();
+  }
   return new StubLLMAdapter();
 }
