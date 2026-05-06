@@ -2,17 +2,34 @@
   <div class="chat-wrap">
     <aside class="side">
       <h3>Sesión</h3>
-      <p class="muted" v-if="sessionId">id: {{ sessionId }}</p>
+      <p class="muted" v-if="sessionId">id: {{ sessionId.slice(0, 8) }}…</p>
       <p class="muted" v-else>nueva</p>
       <button @click="newSession" :disabled="busy">Iniciar otra sesión</button>
 
-      <h3 style="margin-top: 24px">Atajos</h3>
+      <h3 style="margin-top: 16px">Contexto</h3>
+      <div class="ctx">
+        <div class="ctx-row">
+          <span class="ctx-label">Paciente</span>
+          <code v-if="activePatient">{{ activePatient.slice(0, 8) }}…</code>
+          <span v-else class="muted">(ninguno)</span>
+          <button v-if="activePatient" class="link" @click="send('salir paciente')">×</button>
+        </div>
+        <div class="ctx-row">
+          <span class="ctx-label">Episodio</span>
+          <code v-if="activeEpisode">{{ activeEpisode.slice(0, 8) }}…</code>
+          <span v-else class="muted">(ninguno)</span>
+          <button v-if="activeEpisode" class="link" @click="send('salir episodio')">×</button>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 16px">Atajos</h3>
       <div class="shortcuts">
         <button @click="send('whoami')"      :disabled="busy">whoami</button>
         <button @click="send('definitions')" :disabled="busy">definitions</button>
         <button @click="send('pacientes')"   :disabled="busy">pacientes</button>
         <button @click="send('episodios')"   :disabled="busy">episodios</button>
         <button @click="send('diagnósticos')" :disabled="busy">diagnósticos</button>
+        <button @click="send('cie10 melanoma')" :disabled="busy">cie10 melanoma</button>
       </div>
     </aside>
 
@@ -69,6 +86,8 @@ const uploading = ref(false);
 const pendingAttachment = ref(null);
 const error = ref('');
 const sessionId = ref(loadSessionId());
+const activePatient = ref(null);
+const activeEpisode = ref(null);
 const feedEl = ref(null);
 
 function labelFor(role) {
@@ -93,8 +112,11 @@ async function send(message) {
       sessionId.value = r.session_id;
       saveSessionId(r.session_id);
     }
+    if (typeof r?.active_patient_id !== 'undefined') activePatient.value = r.active_patient_id;
+    if (typeof r?.active_episode_id !== 'undefined') activeEpisode.value = r.active_episode_id;
     if (Array.isArray(r?.history)) {
-      turns.value = r.history;
+      // Filter out internal system context turns the server prepends.
+      turns.value = r.history.filter(t => t.role !== 'system');
     } else {
       turns.value = [...turns.value, { role: 'assistant', content: r?.text || '(sin respuesta)' }];
     }
@@ -138,6 +160,8 @@ function newSession() {
   sessionId.value = null;
   saveSessionId('');
   turns.value = [];
+  activePatient.value = null;
+  activeEpisode.value = null;
 }
 
 onMounted(() => { /* hydrate from session_id later if needed */ });
@@ -156,6 +180,12 @@ onMounted(() => { /* hydrate from session_id later if needed */ });
   padding: 6px 10px; border-radius: 4px; text-align: left;
 }
 .muted { color: #94a3b8; font-size: 12px; word-break: break-all; }
+
+.ctx { display: flex; flex-direction: column; gap: 6px; }
+.ctx-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.ctx-label { color: #475569; font-weight: 600; min-width: 60px; }
+.ctx code  { font-family: ui-monospace, monospace; color: #1e293b; background: #f1f5f9; padding: 2px 4px; border-radius: 3px; }
+.ctx .link { background: transparent; color: #94a3b8; border: 0; padding: 0; cursor: pointer; }
 
 .main {
   display: flex; flex-direction: column; gap: 12px;

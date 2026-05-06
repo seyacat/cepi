@@ -67,17 +67,101 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
     mcp = new TodoErpMcpClient({ jwt, apiKey });
     await mcp.connect();
 
+    let activePatientId: string | null = null;
+    let activeEpisodeId: string | null = null;
+
     if (typeof message === 'string' && message.length > 0) {
       // Session-managed path.
       let session = incomingSessionId ? await loadSession(mcp, incomingSessionId) : null;
       if (!session) {
-        // Pull caller identity for the new session record.
         const me = await mcp.call('auth.whoami', {});
         const userId = (me.data?.user?.id as string) || null;
         session = await createSession(mcp, userId);
       }
       sessionId = session.id;
-      inputHistory = [...session.turns, { role: 'user', content: message }];
+
+      // ── slash-style state commands handled server-side, no LLM needed ──
+      const trimmed = message.trim();
+      const setPatient = trimmed.match(/^\/?\s*activar\s+paciente\s+([0-9a-f-]{36})\s*$/i);
+      const clrPatient = trimmed.match(/^\/?\s*(salir|cerrar|olvidar)\s+paciente\s*$/i);
+      const setEpisode = trimmed.match(/^\/?\s*activar\s+episodio\s+([0-9a-f-]{36})\s*$/i);
+      const clrEpisode = trimmed.match(/^\/?\s*(salir|cerrar|olvidar)\s+episodio\s*$/i);
+
+      if (setPatient) {
+        session.active_patient_id = setPatient[1];
+        const ackText = `Paciente activo: ${setPatient[1]}.`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: session.active_patient_id,
+          active_episode_id: session.active_episode_id,
+        });
+      }
+      if (clrPatient) {
+        session.active_patient_id = null;
+        const ackText = `Paciente activo limpiado.`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: null,
+          active_episode_id: session.active_episode_id,
+        });
+      }
+      if (setEpisode) {
+        session.active_episode_id = setEpisode[1];
+        const ackText = `Episodio activo: ${setEpisode[1]}.`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: session.active_patient_id,
+          active_episode_id: session.active_episode_id,
+        });
+      }
+      if (clrEpisode) {
+        session.active_episode_id = null;
+        const ackText = `Episodio activo limpiado.`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: session.active_patient_id,
+          active_episode_id: null,
+        });
+      }
+
+      activePatientId = session.active_patient_id;
+      activeEpisodeId = session.active_episode_id;
+
+      // Inject current state as a system turn so the LLM is aware.
+      const stateNote: ChatTurn = {
+        role: 'system',
+        content: `Contexto activo: paciente=${activePatientId ?? '(ninguno)'}, episodio=${activeEpisodeId ?? '(ninguno)'}. ` +
+                 `Comandos: "activar paciente <uuid>", "salir paciente", "activar episodio <uuid>", "salir episodio".`,
+      };
+      inputHistory = [...session.turns, stateNote, { role: 'user', content: message }];
     } else if (Array.isArray(history)) {
       inputHistory = history as ChatTurn[];
     } else {
@@ -86,11 +170,11 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
 
     const out = await runAgentTurn({ jwt, apiKey, history: inputHistory, mcp });
 
-    // Persist session if we created/loaded one.
     if (sessionId && mcp) {
       const session = await loadSession(mcp, sessionId);
       if (session) {
-        session.turns = out.history;
+        // Don't persist the synthetic system note — strip it before saving.
+        session.turns = out.history.filter(t => t.role !== 'system');
         session.tool_calls = [
           ...session.tool_calls,
           ...out.toolCalls.map(tc => ({
@@ -98,10 +182,18 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           })),
         ];
         await saveSession(mcp, session);
+        activePatientId = session.active_patient_id;
+        activeEpisodeId = session.active_episode_id;
       }
     }
 
-    res.json({ ok: true, session_id: sessionId, ...out });
+    res.json({
+      ok: true,
+      session_id: sessionId,
+      active_patient_id: activePatientId,
+      active_episode_id: activeEpisodeId,
+      ...out,
+    });
   } catch (err) { next(err); }
   finally {
     if (mcp) await mcp.close().catch(() => {});
