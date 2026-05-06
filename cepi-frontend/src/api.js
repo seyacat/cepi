@@ -52,3 +52,23 @@ export async function chat(message, sessionId) {
 export async function whoami() {
   return call('/api/auth/me', { method: 'GET' });
 }
+
+/**
+ * Upload a single file to TodoERP /api/attachments. Optional entity_id
+ * links the attachment to a record. Returns the attachment row.
+ */
+export async function uploadAttachment(file, { entityId, fieldKey } = {}) {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (entityId) fd.append('entity_id', entityId);
+  if (fieldKey) fd.append('field_key', fieldKey);
+
+  const headers = {};
+  const jwt = localStorage.getItem('cepi.jwt');
+  if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+
+  const res = await fetch('/api/attachments', { method: 'POST', headers, body: fd });
+  let body = null; try { body = await res.json(); } catch {}
+  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+  return Array.isArray(body) ? body[0] : body;
+}

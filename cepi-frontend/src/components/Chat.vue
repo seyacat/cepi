@@ -30,11 +30,25 @@
         <textarea
           v-model="draft"
           rows="2"
-          placeholder="Escribe un mensaje. Ctrl+Enter para enviar."
+          placeholder="Escribe un mensaje. Ctrl+Enter para enviar. Adjunta una imagen para procesarla como imagen clínica."
           @keydown.ctrl.enter.prevent="onSubmit"
         />
-        <button type="submit" :disabled="busy || !draft.trim()">Enviar</button>
+        <div class="composer-actions">
+          <label class="upload-btn" :class="{ disabled: busy || uploading }">
+            📎
+            <input type="file" accept="image/*" @change="onFile" :disabled="busy || uploading" />
+          </label>
+          <button type="submit" :disabled="busy || (!draft.trim() && !pendingAttachment)">
+            {{ uploading ? 'Subiendo…' : 'Enviar' }}
+          </button>
+        </div>
       </form>
+
+      <p v-if="pendingAttachment" class="attached">
+        Adjunto listo: <strong>{{ pendingAttachment.original_name || pendingAttachment.filename }}</strong>
+        ({{ Math.round(pendingAttachment.size / 1024) }} KB)
+        <button type="button" @click="pendingAttachment = null" class="link">quitar</button>
+      </p>
 
       <p v-if="error" class="error">{{ error }}</p>
     </section>
@@ -43,7 +57,7 @@
 
 <script setup>
 import { ref, nextTick, onMounted } from 'vue';
-import { chat, loadSessionId, saveSessionId } from '../api.js';
+import { chat, loadSessionId, saveSessionId, uploadAttachment } from '../api.js';
 import ToolResult from './ToolResult.vue';
 
 defineProps({ user: Object });
@@ -51,6 +65,8 @@ defineProps({ user: Object });
 const turns = ref([]);             // ChatTurn[]
 const draft = ref('');
 const busy  = ref(false);
+const uploading = ref(false);
+const pendingAttachment = ref(null);
 const error = ref('');
 const sessionId = ref(loadSessionId());
 const feedEl = ref(null);
@@ -91,9 +107,31 @@ async function send(message) {
 }
 
 function onSubmit() {
-  const t = draft.value;
+  const t = draft.value.trim();
+  let payload = t;
+  if (pendingAttachment.value) {
+    const a = pendingAttachment.value;
+    payload = (t ? t + '\n' : '') + `[adjunto: ${a.original_name || a.filename} · ${a.id}]`;
+  }
   draft.value = '';
-  send(t);
+  pendingAttachment.value = null;
+  send(payload);
+}
+
+async function onFile(ev) {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+  uploading.value = true;
+  error.value = '';
+  try {
+    const att = await uploadAttachment(file);
+    pendingAttachment.value = att;
+  } catch (e) {
+    error.value = `Subida falló: ${e.message || e}`;
+  } finally {
+    uploading.value = false;
+  }
 }
 
 function newSession() {
@@ -141,10 +179,26 @@ onMounted(() => { /* hydrate from session_id later if needed */ });
   flex: 1; resize: vertical; min-height: 56px;
   padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 4px;
 }
+.composer-actions { display: flex; flex-direction: column; gap: 6px; }
 .composer button {
-  padding: 0 18px; background: #6366f1; color: #fff; border: none;
+  padding: 8px 16px; background: #6366f1; color: #fff; border: none;
   border-radius: 4px; font-weight: 600;
 }
 .composer button[disabled] { opacity: .5; cursor: not-allowed; }
+.upload-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 36px; cursor: pointer;
+  border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc;
+  font-size: 18px;
+}
+.upload-btn input { display: none; }
+.upload-btn.disabled { opacity: .5; cursor: not-allowed; }
+.attached {
+  background: #eef2ff; border: 1px solid #c7d2fe; padding: 8px 12px;
+  border-radius: 6px; font-size: 13px; color: #3730a3; margin: 0;
+  display: flex; gap: 8px; align-items: center;
+}
+.attached strong { color: #1e1b4b; }
+.attached .link { background: transparent; color: #6366f1; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
 .error { color: #dc2626; font-size: 13px; margin: 0; }
 </style>

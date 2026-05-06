@@ -77,6 +77,19 @@ export class StubLLMAdapter implements LLMAdapter {
     const msg = (last?.content || '').toLowerCase().trim();
     const has = (...needles: string[]) => needles.some(n => msg.includes(n));
 
+    // Attachment marker emitted by the frontend uploader: "[adjunto: name · uuid]".
+    // For now we just acknowledge — wiring it to a clinical_image entity needs
+    // an active episode, which the agent will manage in a later iteration.
+    const attachMatch = (last?.content || '').match(/\[adjunto:\s*([^·]+)·\s*([0-9a-f-]{36})\s*\]/i);
+    if (attachMatch) {
+      const name = attachMatch[1].trim();
+      const id   = attachMatch[2];
+      return {
+        kind: 'message',
+        text: `Recibí el adjunto **${name}** (id: \`${id}\`). Cuando tengas un episodio activo, dime "guardar imagen en episodio <id>" y la enlazo como imagen clínica.`,
+      };
+    }
+
     if (has('tools', '/tools')) {
       return {
         kind: 'message',
