@@ -166,6 +166,17 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           const ackText = result.ok
             ? pa.successMessage.replace(/\{\{id\}\}/g, newId)
             : `No pude completar la acción: ${result.error}`;
+
+          // Convenience: auto-activate newly created clinical entities so the
+          // user can keep working without typing UUIDs back at the bot.
+          if (result.ok && pa.tool === 'entities.create' && newId) {
+            const createdType = (pa.args as any)?.entity_id;
+            if (createdType === '11000000-0000-0000-0000-000000000000') {
+              session.active_patient_id = newId;
+            } else if (createdType === '12000000-0000-0000-0000-000000000000') {
+              session.active_episode_id = newId;
+            }
+          }
           session.pending_action = null;
           session.turns = [
             ...session.turns,
@@ -177,8 +188,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             ok: true, session_id: sessionId, text: ackText,
             history: session.turns,
             toolCalls: [{ name: pa.tool, args: pa.args, result }],
-            active_patient_id: activePatientId,
-            active_episode_id: activeEpisodeId,
+            active_patient_id: session.active_patient_id,
+            active_episode_id: session.active_episode_id,
           });
         }
         if (confirmNo.test(message.trim())) {
@@ -200,6 +211,67 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Other input while a pending_action exists: keep the pending; the
         // LLM still sees state context, but user might be reconsidering.
         // Fall through to the normal LLM path below.
+      }
+
+      // ── Stage "nuevo episodio <motivo>" behind confirmation gate ──
+      const newEpisodeMatch = message.trim().match(/^\/?\s*nuevo\s+episodio\b\s*(.*)$/i);
+      if (newEpisodeMatch) {
+        if (!activePatientId) {
+          const ackText = 'Necesito un paciente activo. Usa "activar paciente <uuid>" primero.';
+          session.turns = [
+            ...session.turns,
+            { role: 'user',      content: message },
+            { role: 'assistant', content: ackText },
+          ];
+          await saveSession(mcp, session);
+          return res.json({
+            ok: true, session_id: sessionId, text: ackText,
+            history: session.turns, toolCalls: [],
+            active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          });
+        }
+        const motivo = (newEpisodeMatch[1] || '').trim() || 'Consulta general';
+        const today  = new Date().toISOString().slice(0, 10);
+        const me = await mcp.call('auth.whoami', {});
+        const userId = (me.data?.user?.id as string) || null;
+        session.pending_action = {
+          summary: `Crear episodio para paciente ${activePatientId}`,
+          tool: 'entities.create',
+          args: {
+            record_type: 'business',
+            entity_id:   '12000000-0000-0000-0000-000000000000',
+            title:       `episode_${today}`,
+            data: {
+              ['11000000-0000-0000-0000-000000000000:patient_id']: activePatientId,
+              medico_id:       userId,
+              fecha:           today,
+              tipo:            'presencial',
+              motivo_consulta: motivo,
+              estado:          'en_curso',
+            },
+          },
+          successMessage: `Episodio creado (id: {{id}}). Lo activo automáticamente; puedes ya subir imágenes.`,
+          createdAt: new Date().toISOString(),
+        };
+        const ackText =
+          `Voy a crear un episodio:\n` +
+          `  • paciente: ${activePatientId}\n` +
+          `  • fecha: ${today}\n` +
+          `  • tipo: presencial\n` +
+          `  • motivo: ${motivo}\n` +
+          `  • estado: en_curso\n\n` +
+          `¿Confirmas? (sí / no)`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+        });
       }
 
       // ── Auto-stage clinical_image creation behind confirmation gate ──
