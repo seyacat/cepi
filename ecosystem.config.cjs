@@ -28,6 +28,7 @@ module.exports = {
         NODE_ENV: 'development',
         STAGE: 'DEVELOP',
         PORT: 3001,
+        CEPI_MEDICAL: '1',
       },
       max_memory_restart: '500M',
     },
