@@ -1,0 +1,19 @@
+{
+  "name": "cepi-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CEPI medical frontend — chat UI for médicos / pacientes / guest",
+  "scripts": {
+    "dev": "vite --port 5174 --host",
+    "build": "vite build",
+    "preview": "vite preview --port 5174"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "vite": "^5.4.0"
+  }
+}

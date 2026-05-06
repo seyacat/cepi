@@ -58,5 +58,16 @@ module.exports = {
       },
       max_memory_restart: '500M',
     },
+    {
+      // Fase 4 — medical UI. Vue 3 + Vite. Proxies /api/auth and
+      // /api/entities to TodoERP, /api/bot to cepi-bot.
+      name: 'cepi-frontend',
+      script: 'node',
+      args: 'node_modules/vite/bin/vite.js --host --port 5174',
+      cwd: './cepi-frontend',
+      watch: false,
+      env: { NODE_ENV: 'development' },
+      max_memory_restart: '500M',
+    },
   ],
 };
