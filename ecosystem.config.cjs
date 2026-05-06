@@ -43,5 +43,20 @@ module.exports = {
       },
       max_memory_restart: '500M',
     },
+    {
+      // Fase 4 — conversational agent. Spawns the TodoERP MCP server as a
+      // child stdio process per chat turn; auth flows via the user's JWT.
+      name: 'cepi-bot',
+      script: 'node',
+      args: '--no-warnings=ExperimentalWarning --loader ts-node/esm src/server.ts',
+      cwd: './cepi-bot',
+      watch: false,
+      env: {
+        NODE_ENV: 'development',
+        PORT: 3002,
+        TODOERP_API_URL: 'http://localhost:3001',
+      },
+      max_memory_restart: '500M',
+    },
   ],
 };
