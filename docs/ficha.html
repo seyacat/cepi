@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<!--
+  Historia Clínica Dermatológica - APS
+  Template HTML para generar PDF A4 (una página).
+
+  Receta de render con puppeteer:
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
+    await page.goto('file:///.../docs/ficha.html');
+    await page.evaluate((data) => fillFicha(data), payload);
+    await page.pdf({
+      path: 'ficha.pdf',
+      format: 'A4',
+      printBackground: true,
+      preferCSSPageSize: true
+    });
+
+  fillFicha(data) acepta los keys de las entities (patient/episode):
+    nombre, cedula, direccion, telefono, sector_ciudad, ocupacion, email,
+    edad, sexo ("M"|"F"), etnia ("mestiza"|"blanco"|"afro"|"otra"),
+    escolaridad_anios, escolaridad_grado, condicion_socioeconomica,
+    antecedentes_personales(_presente), antecedentes_familiares(_presente),
+    motivo_consulta, tiempo_evolucion, curso, sintomas_presente,
+    picor, dolor, causa_aparente(_presente), patologia_asociada(_presente),
+    tratamientos_previos(_presente),
+    lesion_macula/papula/placa/vesicula/ampolla/tumor/nodulo/ulcera, lesion_otra,
+    caract_eritema/descamacion/exudacion/liquenificacion/otra,
+    topo_unica/multiples/bilateral/simetrico/confluente/agrupadas/circular/lineal/borde, topo_otra,
+    gravedad_extension/intensidad/funcionalidad (0..3), gravedad_total (0..9),
+    patron_inflam_epidermica/inflam_dermica/necrosis/tumor/color,
+    notas_examen, diagnostico, diagnostico_letra ("A"|"B"|"C"),
+    estudios_complementarios_presente, estudios_complementarios_resumen,
+    tratamiento_resumen, medico, ficha_num, fecha, examinador_nombre.
+-->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Historia Clínica Dermatológica - APS</title>
+<style>
+  /* ---------- Layout base (A4) ----------
+     Pensado para generar PDF con Chrome/puppeteer:
+       page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true })
+     El layout cabe en UNA página A4. Márgenes los maneja .ficha (no @page),
+     así puppeteer respeta el tamaño exacto sin clipping.
+  */
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; background: #e8e8e8; font-family: Georgia, "Times New Roman", serif; color: #222; }
+  body { padding: 16px; }
+  .ficha {
+    width: 210mm; height: 297mm; margin: 0 auto;
+    background: #fff; padding: 6mm 8mm; font-size: 8.5pt; line-height: 1.25;
+    box-shadow: 0 2px 12px rgba(0,0,0,.15);
+    overflow: hidden;
+  }
+
+  /* ---------- Inputs ---------- */
+  input[type="text"], input[type="number"], input[type="date"] {
+    border: none; border-bottom: 1px solid #555;
+    background: transparent; font: inherit; color: #0a3a6b;
+    padding: 0 2px; outline: none;
+  }
+  input[type="text"]:focus, input[type="number"]:focus, input[type="date"]:focus,
+  textarea:focus { background: #fffbe8; }
+  textarea {
+    border: none; resize: none; width: 100%;
+    background: transparent; font: inherit; color: #0a3a6b; outline: none;
+    line-height: 1.6;
+    background-image: repeating-linear-gradient(transparent 0, transparent 1.45em, #555 1.45em, #555 calc(1.45em + 1px));
+  }
+  input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 12px; height: 12px; border: 1px solid #555; border-radius: 1px;
+    background: #fff; vertical-align: middle; margin: 0 4px 0 0; cursor: pointer;
+    position: relative; top: -1px;
+  }
+  input[type="checkbox"]:checked::before {
+    content: ""; position: absolute; left: 1px; top: 1px;
+    width: 8px; height: 8px;
+    background: linear-gradient(45deg, transparent 45%, #1a1a1a 45%, #1a1a1a 55%, transparent 55%),
+                linear-gradient(-45deg, transparent 45%, #1a1a1a 45%, #1a1a1a 55%, transparent 55%);
+  }
+  label { user-select: none; }
+  .lbl { font-weight: 700; }
+  .small { font-size: 8.5pt; color: #555; font-style: italic; }
+
+  /* ---------- Header ---------- */
+  .header { display: grid; grid-template-columns: 70px 1fr 250px; gap: 10px; align-items: center; margin-bottom: 4px; }
+  .logo {
+    width: 56px; height: 56px; border: 2px solid #3a7a85; border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #3a7a85; font-weight: 700; letter-spacing: 2px; font-size: 9pt;
+  }
+  .logo small { font-size: 4.5pt; letter-spacing: 0.3px; font-weight: 400; margin-top: 1px; }
+  .title-bar {
+    background: #5b9097; color: #fff; padding: 6px 10px;
+    font-size: 14pt; font-style: italic; text-align: center;
+  }
+  .header-fields { display: grid; grid-template-columns: 90px 1fr; row-gap: 4px; column-gap: 6px; align-items: center; }
+  .header-fields .lbl { text-align: right; }
+  .header-fields input { width: 100%; }
+
+  /* ---------- Section bars ---------- */
+  .section { margin-top: 6px; }
+  .section-bar {
+    display: flex; align-items: center; gap: 6px;
+    color: #fff; font-weight: 700; font-size: 11pt;
+    padding: 2px 12px; width: max-content; min-width: 150px;
+  }
+  .section-line { height: 2px; margin-top: -2px; }
+  .s1 .section-bar { background: #5b9097; } .s1 .section-line { background: #5b9097; }
+  .s2 .section-bar { background: #6a3a6e; } .s2 .section-line { background: #6a3a6e; }
+  .s3 .section-bar { background: #7a8a3a; } .s3 .section-line { background: #7a8a3a; }
+  .s4 .section-bar { background: #8b3a3a; } .s4 .section-line { background: #8b3a3a; }
+
+  .section-body { padding: 6px 4px 2px 4px; }
+
+  /* ---------- Generic helpers ---------- */
+  .row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 3px; }
+  .row .grow { flex: 1; }
+  .row input[type="text"], .row input[type="date"], .row input[type="number"] { flex: 1; min-width: 80px; }
+  .field { display: flex; align-items: baseline; gap: 6px; }
+  .field .label { font-weight: 700; white-space: nowrap; }
+  .checkrow { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+  .checkrow label { display: inline-flex; align-items: center; gap: 4px; }
+
+  /* ---------- §4 grid (lesión / silueta / gravedad) ---------- */
+  .examen-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto 1fr;
+    gap: 6px 10px;
+    margin-top: 4px;
+  }
+  .examen-grid .col-left   { grid-column: 1; grid-row: 1 / 3; }
+  .examen-grid .col-mid    { grid-column: 2; grid-row: 1; }
+  .examen-grid .col-right  { grid-column: 3; grid-row: 1; }
+  .examen-grid .col-notas  { grid-column: 2 / 4; grid-row: 2; align-self: end; }
+  .col-notas .lbl { display: block; margin-bottom: 2px; }
+  .examen-grid .col h4 { margin: 0 0 6px 0; font-size: 10.5pt; }
+  .col-cb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+  .col-cb-grid label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .caract-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; }
+  .caract-item { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+  .caract-item > span { white-space: nowrap; }
+  .caract-item > input { flex: 1; min-width: 0; }
+  .caract-full { grid-column: 1 / -1; }
+  .silhouettes img { width: 100%; height: auto; display: block; object-fit: contain; margin: 0 auto; }
+  .grav-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  .grav-table th, .grav-table td { padding: 3px 4px; text-align: center; font-size: 9.5pt; }
+  .grav-table th:first-child, .grav-table td:first-child { text-align: left; font-weight: 700; }
+  .grav-total {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  .grav-total .box {
+    background: #d6cfc6; border: 1px solid #555; padding: 2px 12px;
+    min-width: 50px; text-align: center;
+  }
+  .grav-total .legend { font-size: 8.5pt; color: #555; font-style: italic; line-height: 1.4; }
+
+  /* ---------- §2 antecedentes (split textarea) ---------- */
+  .ant-grid { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0 12px; }
+  .ant-grid .sep { background: #aaa; }
+  .ant-grid textarea { min-height: 2.5em; }
+
+  /* ---------- Divider ornament ---------- */
+  .divider { display: flex; justify-content: center; margin: 6px 0 4px 0; }
+  .divider::before { content: ""; display: block; width: 100px; height: 6px; background: #c87a3a; }
+
+  /* ---------- Diagnostico A/B/C ---------- */
+  .dx-row { display: flex; align-items: baseline; gap: 6px; }
+  .dx-letras { display: flex; gap: 4px; }
+  .dx-letras label { display: inline-flex; flex-direction: column-reverse; align-items: center; font-size: 8.5pt; gap: 2px; }
+
+  /* ---------- Footer ---------- */
+  .firma { margin-top: 32px; display: flex; justify-content: flex-end; }
+  .firma .firma-box { width: 60%; text-align: center; }
+  .firma input { width: 100%; text-align: center; }
+  .firma .lbl { display: block; margin-top: 2px; }
+
+  /* ---------- Print / PDF ---------- */
+  @media print {
+    body { background: #fff; padding: 0; }
+    .ficha { box-shadow: none; margin: 0; }
+    input, textarea { color: #000 !important; background: transparent !important; }
+    /* Ocultar caret/outline cuando hay contenido pre-rellenado */
+    input:focus, textarea:focus { background: transparent !important; }
+    /* Que los checkbox marcados se vean iguales en print */
+    input[type="checkbox"] { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<form class="ficha" id="ficha-aps" autocomplete="off" novalidate>
+
+  <!-- ============================== HEADER ============================== -->
+  <div class="header">
+    <div class="logo">CEPI<small>CENTRO DE LA PIEL</small></div>
+    <div class="title-bar">Historia Cl<span style="font-style:normal">í</span>nica Dermatol&oacute;gica - APS</div>
+    <div class="header-fields">
+      <span class="lbl">Ficha #:</span> <input type="text" name="ficha_num">
+      <span class="lbl">Fecha:</span>   <input type="date" name="fecha">
+      <span class="lbl">Examinador:</span> <input type="text" name="examinador_nombre">
+    </div>
+  </div>
+
+  <!-- ============================== §1 FILIACIÓN ============================== -->
+  <section class="section s1">
+    <div class="section-bar">1. Filiaci&oacute;n</div>
+    <div class="section-line"></div>
+    <div class="section-body">
+      <div class="row">
+        <span class="lbl">1.1 Nombre:</span>
+        <input type="text" name="nombre" style="flex:3">
+        <span class="lbl">CI:</span>
+        <input type="text" name="cedula" style="flex:1.5">
+      </div>
+      <div class="row">
+        <span>Direcci&oacute;n</span>
+        <input type="text" name="direccion" style="flex:3">
+        <span class="lbl">Tel&eacute;fono:</span>
+        <input type="text" name="telefono" style="flex:1.5">
+      </div>
+      <div class="row">
+        <span>Sector / Ciudad</span>
+        <input type="text" name="sector_ciudad" style="flex:3">
+      </div>
+      <div class="row">
+        <span>Ocupaci&oacute;n / Profesi&oacute;n:</span>
+        <input type="text" name="ocupacion" style="flex:3">
+        <span class="lbl">Correo:</span>
+        <input type="text" name="email" style="flex:1.5">
+      </div>
+      <div class="row">
+        <span class="lbl">1.2 Edad <span class="small">(a&ntilde;os cumplidos)</span> :</span>
+        <input type="number" name="edad" style="max-width:60px; flex:0 0 60px;">
+        <span class="lbl">1.3 Sexo:</span>
+        <label><input type="checkbox" name="sexo_M"> M</label>
+        <label><input type="checkbox" name="sexo_F"> F</label>
+        <span class="lbl">1.4 Etnia:</span>
+        <label><input type="checkbox" name="etnia_mestiza"> Mestiza</label>
+        <label><input type="checkbox" name="etnia_blanco"> Blanco</label>
+        <label><input type="checkbox" name="etnia_afro"> Afro</label>
+        <label><input type="checkbox" name="etnia_otra_chk"> Otra</label>
+        <input type="text" name="etnia_otra" style="flex:1">
+      </div>
+      <div class="row">
+        <span class="lbl">1.5 Escolaridad <span class="small">(a&ntilde;os/grado)</span>:</span>
+        <input type="number" name="escolaridad_anios" style="max-width:60px; flex:0 0 60px;">
+        <span>/</span>
+        <input type="text" name="escolaridad_grado" style="max-width:120px; flex:0 0 120px;">
+        <span class="lbl">1.6 Condici&oacute;n Socio/econ&oacute;mica:</span>
+        <label><input type="checkbox" name="socio_alto"> Alto</label>
+        <label><input type="checkbox" name="socio_medio"> Medio</label>
+        <label><input type="checkbox" name="socio_bajo"> Bajo</label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== §2 ANTECEDENTES ============================== -->
+  <section class="section s2">
+    <div class="section-bar">2. Antecedentes</div>
+    <div class="section-line"></div>
+    <div class="section-body">
+      <div class="ant-grid">
+        <div>
+          <div class="row" style="margin-bottom:4px">
+            <span class="lbl">2.1 Antecedentes Patol&oacute;gicos Personales</span>
+            <label><input type="checkbox" name="antecedentes_personales_presente_si"> Si</label>
+            <label><input type="checkbox" name="antecedentes_personales_presente_no"> No</label>
+          </div>
+          <textarea name="antecedentes_personales" rows="3"></textarea>
+        </div>
+        <div class="sep"></div>
+        <div>
+          <div class="row" style="margin-bottom:4px">
+            <span class="lbl">2.1 Antecedentes Patol&oacute;gicos Familiares</span>
+            <label><input type="checkbox" name="antecedentes_familiares_presente_si"> Si</label>
+            <label><input type="checkbox" name="antecedentes_familiares_presente_no"> No</label>
+          </div>
+          <textarea name="antecedentes_familiares" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== §3 ANAMNESIS ============================== -->
+  <section class="section s3">
+    <div class="section-bar">3. Anamnesis</div>
+    <div class="section-line"></div>
+    <div class="section-body">
+      <div class="row">
+        <span class="lbl">3.1 Motivo de consulta:</span>
+        <input type="text" name="motivo_consulta" style="flex:3">
+        <span class="lbl">3.2 Tiempo de evoluci&oacute;n:</span>
+        <input type="text" name="tiempo_evolucion" placeholder="d&iacute;as, semanas, meses, a&ntilde;os" style="flex:1.5">
+      </div>
+      <div class="row">
+        <span class="lbl">3.3 Curso:</span>
+        <label><input type="checkbox" name="curso_progresivo"> Progresivo</label>
+        <label><input type="checkbox" name="curso_regresivo"> Regresivo</label>
+        <label><input type="checkbox" name="curso_continuo"> Continuo</label>
+        <label><input type="checkbox" name="curso_intermitente"> Intermitente</label>
+        <span class="lbl">3.4 S&iacute;ntomas:</span>
+        <label><input type="checkbox" name="sintomas_presente_si"> Si</label>
+        <label><input type="checkbox" name="sintomas_presente_no"> No</label>
+      </div>
+      <div class="row">
+        <span style="margin-left:auto"></span>
+        <span>Picor (+):</span> <input type="text" name="picor" style="flex:1; max-width:240px">
+        <span>Dolor (+):</span> <input type="text" name="dolor" style="flex:1; max-width:240px">
+      </div>
+      <div class="row">
+        <span class="lbl">3.5 Causa Aparente:</span>
+        <label><input type="checkbox" name="causa_aparente_presente_si"> Si</label>
+        <label><input type="checkbox" name="causa_aparente_presente_no"> No</label>
+        <input type="text" name="causa_aparente" style="flex:1">
+      </div>
+      <div class="row">
+        <span class="lbl">3.6 Patolog&iacute;a Asociada / RAS:</span>
+        <label><input type="checkbox" name="patologia_asociada_presente_si"> Si</label>
+        <label><input type="checkbox" name="patologia_asociada_presente_no"> No</label>
+        <input type="text" name="patologia_asociada" style="flex:1">
+      </div>
+      <div class="row">
+        <span class="lbl">3.7 Tratamientos:</span>
+        <label><input type="checkbox" name="tratamientos_previos_presente_si"> Si</label>
+        <label><input type="checkbox" name="tratamientos_previos_presente_no"> No</label>
+        <input type="text" name="tratamientos_previos" style="flex:1">
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== §4 EXAMEN FÍSICO ============================== -->
+  <section class="section s4">
+    <div class="section-bar">4. Examen F&iacute;sico</div>
+    <div class="section-line"></div>
+    <div class="section-body">
+
+      <div class="examen-grid">
+        <!-- ===== Columna izquierda: 4.1 lesión + 4.2 caract + 4.3 topo ===== -->
+        <div class="col col-left">
+          <h4>4.1 Lesi&oacute;n elemental:</h4>
+          <div class="col-cb-grid">
+            <label><input type="checkbox" name="lesion_macula"> M&aacute;cula</label>
+            <label><input type="checkbox" name="lesion_tumor"> Tumor</label>
+            <label><input type="checkbox" name="lesion_papula"> P&aacute;pula</label>
+            <label><input type="checkbox" name="lesion_nodulo"> N&oacute;dulo</label>
+            <label><input type="checkbox" name="lesion_placa"> Placa</label>
+            <label><input type="checkbox" name="lesion_ulcera"> &Uacute;lcera</label>
+            <label><input type="checkbox" name="lesion_vesicula"> Ves&iacute;cula</label>
+            <label style="grid-column: span 1; gap:4px;">Otra <input type="text" name="lesion_otra" style="flex:1; min-width:60px"></label>
+            <label><input type="checkbox" name="lesion_ampolla"> Ampolla</label>
+          </div>
+
+          <h4 style="margin-top:10px">4.2 Caracter&iacute;sticas individuales (+):</h4>
+          <div class="caract-grid">
+            <div class="caract-item"><span>Eritema</span><input type="text" name="caract_eritema"></div>
+            <div class="caract-item"><span>Descam.</span><input type="text" name="caract_descamacion"></div>
+            <div class="caract-item"><span>Exudaci&oacute;n</span><input type="text" name="caract_exudacion"></div>
+            <div class="caract-item"><span>Liquenif.</span><input type="text" name="caract_liquenificacion"></div>
+            <div class="caract-item caract-full"><span>Otra</span><input type="text" name="caract_otra"></div>
+          </div>
+
+          <h4 style="margin-top:12px">4.3 Caracter&iacute;sticas topogr&aacute;ficas:</h4>
+          <div class="col-cb-grid">
+            <label><input type="checkbox" name="topo_unica"> &Uacute;nica</label>
+            <label><input type="checkbox" name="topo_multiples"> M&uacute;ltiples</label>
+            <label><input type="checkbox" name="topo_bilateral"> Bilateral</label>
+            <label><input type="checkbox" name="topo_simetrico"> Sim&eacute;trico</label>
+            <label><input type="checkbox" name="topo_confluente"> Confluente</label>
+            <label><input type="checkbox" name="topo_agrupadas"> Agrupadas</label>
+            <label><input type="checkbox" name="topo_circular"> Circular</label>
+            <label><input type="checkbox" name="topo_lineal"> Lineal</label>
+            <label><input type="checkbox" name="topo_borde"> Borde</label>
+            <label></label>
+          </div>
+          <div class="row" style="margin-top:4px">
+            <span>Otra</span>
+            <input type="text" name="topo_otra" style="flex:1">
+          </div>
+        </div>
+
+        <!-- ===== Columna central: siluetas ===== -->
+        <div class="col col-mid silhouettes">
+          <img src="cuerpos.png" alt="Siluetas anterior y posterior">
+        </div>
+
+        <!-- ===== Columna derecha: 4.4 gravedad + 4.5 patrón ===== -->
+        <div class="col col-right">
+          <h4>4.4 Gravedad:</h4>
+          <table class="grav-table">
+            <thead>
+              <tr><th></th><th>0</th><th>1</th><th>2</th><th>3</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>E</b>xtensi&oacute;n</td>
+                <td><input type="radio" name="gravedad_extension" value="0"></td>
+                <td><input type="radio" name="gravedad_extension" value="1"></td>
+                <td><input type="radio" name="gravedad_extension" value="2"></td>
+                <td><input type="radio" name="gravedad_extension" value="3"></td>
+              </tr>
+              <tr>
+                <td><b>I</b>ntensidad</td>
+                <td><input type="radio" name="gravedad_intensidad" value="0"></td>
+                <td><input type="radio" name="gravedad_intensidad" value="1"></td>
+                <td><input type="radio" name="gravedad_intensidad" value="2"></td>
+                <td><input type="radio" name="gravedad_intensidad" value="3"></td>
+              </tr>
+              <tr>
+                <td><b>F</b>uncionalidad</td>
+                <td><input type="radio" name="gravedad_funcionalidad" value="0"></td>
+                <td><input type="radio" name="gravedad_funcionalidad" value="1"></td>
+                <td><input type="radio" name="gravedad_funcionalidad" value="2"></td>
+                <td><input type="radio" name="gravedad_funcionalidad" value="3"></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="grav-total">
+            <span>E+I+F =</span>
+            <span class="box"><input type="number" name="gravedad_total" min="0" max="9" style="border:none; width:40px; text-align:center; color:#000;"></span>
+            <span>/9</span>
+            <div class="legend">
+              0 - 3 = Leve<br>
+              4 - 6 = Moderada<br>
+              7 - 9 = Grave
+            </div>
+          </div>
+
+          <h4 style="margin-top:10px">4.5 Patr&oacute;n:</h4>
+          <div style="display:flex; flex-direction:column; gap:3px;">
+            <label><input type="checkbox" name="patron_inflam_epidermica"> Inflamaci&oacute;n epid&eacute;rmica</label>
+            <label><input type="checkbox" name="patron_inflam_dermica"> Inflamaci&oacute;n d&eacute;rmica</label>
+            <label><input type="checkbox" name="patron_necrosis"> Necrosis</label>
+            <label><input type="checkbox" name="patron_tumor"> Tumor</label>
+            <label><input type="checkbox" name="patron_color"> Color</label>
+          </div>
+        </div>
+
+        <!-- ===== Notas: ocupa cols 2-3, fondo de la sección ===== -->
+        <div class="col-notas">
+          <span class="lbl">Notas:</span>
+          <textarea name="notas_examen" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ============================== §5 DIAGNÓSTICO ============================== -->
+  <section class="section">
+    <div class="dx-row">
+      <span class="lbl">5. Diagn&oacute;stico:</span>
+      <div class="dx-letras">
+        <label>A<input type="checkbox" name="dx_a"></label>
+        <label>B<input type="checkbox" name="dx_b"></label>
+        <label>C<input type="checkbox" name="dx_c"></label>
+      </div>
+      <input type="text" name="diagnostico" style="flex:1">
+    </div>
+  </section>
+
+  <!-- ============================== §6 ESTUDIOS ============================== -->
+  <section class="section" style="margin-top:8px">
+    <div class="row">
+      <span class="lbl">6. Estudios Complementarios:</span>
+      <label><input type="checkbox" name="estudios_complementarios_presente_si"> Si</label>
+      <label><input type="checkbox" name="estudios_complementarios_presente_no"> No</label>
+      <input type="text" name="estudios_complementarios_resumen" style="flex:1">
+    </div>
+  </section>
+
+  <!-- ============================== §7 TRATAMIENTO ============================== -->
+  <section class="section" style="margin-top:8px">
+    <div class="row">
+      <span class="lbl">7. Tratamiento:</span>
+      <input type="text" name="tratamiento_resumen" style="flex:1">
+    </div>
+  </section>
+
+  <!-- ============================== FIRMA ============================== -->
+  <div class="firma">
+    <div class="firma-box">
+      <input type="text" name="medico">
+      <span class="lbl">M&eacute;dico: <span style="font-weight:400">Nombre / Firma</span></span>
+    </div>
+  </div>
+
+</form>
+
+<script>
+/* ----------------------------------------------------------------------------
+ * API mínima para que el bot llene la ficha programáticamente.
+ *
+ *   fillFicha({ nombre: "Juan Perez", sexo: "M", curso: "progresivo",
+ *               lesion_macula: true, gravedad_extension: 2, ... })
+ *
+ *   Los pares Si/No (xxx_presente) aceptan boolean: true marca _si,
+ *   false marca _no, undefined deja ambos vacíos.
+ *   Los selects (sexo, curso, etnia, condicion_socioeconomica, letra dx)
+ *   aceptan el value string y marcan el checkbox correspondiente.
+ * -------------------------------------------------------------------------- */
+function fillFicha(data) {
+  const form = document.getElementById('ficha-aps');
+  const set = (name, val) => {
+    const el = form.elements[name];
+    if (!el) return false;
+    if (el.type === 'checkbox') el.checked = !!val;
+    else if (el.type === 'radio' || el.length) {
+      // RadioNodeList
+      [...form.elements[name]].forEach(r => { if (r.value === String(val)) r.checked = true; });
+    } else el.value = val ?? '';
+    return true;
+  };
+  const presentPair = (base, val) => {
+    if (val === true)  { set(base + '_si', true);  set(base + '_no', false); }
+    else if (val === false) { set(base + '_si', false); set(base + '_no', true); }
+  };
+  const selectGroup = (val, options) => {
+    options.forEach(o => set(o, false));
+    const match = options.find(o => o.endsWith('_' + String(val).toLowerCase()) || o.endsWith(String(val)));
+    if (match) set(match, true);
+  };
+
+  for (const [k, v] of Object.entries(data || {})) {
+    switch (k) {
+      case 'sexo':                       selectGroup(v, ['sexo_M','sexo_F']); break;
+      case 'etnia':                      selectGroup(v, ['etnia_mestiza','etnia_blanco','etnia_afro','etnia_otra_chk']); break;
+      case 'condicion_socioeconomica':   selectGroup(v, ['socio_alto','socio_medio','socio_bajo']); break;
+      case 'curso':                      selectGroup(v, ['curso_progresivo','curso_regresivo','curso_continuo','curso_intermitente']); break;
+      case 'antecedentes_personales_presente':
+      case 'antecedentes_familiares_presente':
+      case 'sintomas_presente':
+      case 'causa_aparente_presente':
+      case 'patologia_asociada_presente':
+      case 'tratamientos_previos_presente':
+      case 'estudios_complementarios_presente':
+        presentPair(k, v); break;
+      case 'diagnostico_letra':          selectGroup(v, ['dx_a','dx_b','dx_c']); break;
+      default: set(k, v);
+    }
+  }
+}
+
+/* Lectura inversa: dump del formulario al schema de las entities. */
+function readFicha() {
+  const form = document.getElementById('ficha-aps');
+  const fd = new FormData(form);
+  const data = {};
+  for (const [k, v] of fd.entries()) {
+    if (data[k] !== undefined) {
+      data[k] = Array.isArray(data[k]) ? [...data[k], v] : [data[k], v];
+    } else data[k] = v;
+  }
+  // Booleanos para los checkbox (FormData omite los no marcados).
+  form.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    if (!(cb.name in data)) data[cb.name] = false;
+    else if (data[cb.name] === 'on') data[cb.name] = true;
+  });
+  return data;
+}
+
+window.fillFicha = fillFicha;
+window.readFicha = readFicha;
+</script>
+</body>
+</html>
