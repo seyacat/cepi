@@ -104,6 +104,8 @@ export class StubLLMAdapter implements LLMAdapter {
           '**Flujos clínicos** (cada uno pide confirmación)',
           '  nuevo episodio <motivo>    → crea episodio para el paciente activo',
           '  cerrar episodio [YYYY-MM-DD] [motivo] → cierra episodio + reminder',
+          '  diagnostico <CIE10> <descripción>  → crea diagnóstico presuntivo',
+          '  /escalar a <user-uuid> <razón>     → escala episodio a colega',
           '  📎 (adjuntar imagen)        → crea clinical_image ligada al episodio',
           '',
           '**Lectura rápida**',

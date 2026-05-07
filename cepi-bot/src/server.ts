@@ -213,6 +213,50 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── Stage "/diagnostico <CIE10> <descripcion>" (presuntivo by default) ──
+      const diagMatch = message.trim().match(/^\/?\s*diagn[óo]stico\s+([A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?)\s+(.+)$/i);
+      if (diagMatch && activeEpisodeId) {
+        const codigo = diagMatch[1].toUpperCase();
+        const desc   = diagMatch[2].trim();
+        session.pending_action = {
+          summary: `Crear diagnóstico presuntivo (${codigo}) en el episodio ${activeEpisodeId}`,
+          tool: 'entities.create',
+          args: {
+            record_type: 'business',
+            entity_id:   '13000000-0000-0000-0000-000000000000',
+            title:       `dx_${codigo}`,
+            data: {
+              ['12000000-0000-0000-0000-000000000000:episode_id']: activeEpisodeId,
+              tipo:          'presuntivo',
+              codigo_cie10:  codigo,
+              descripcion:   desc,
+            },
+          },
+          successMessage: `Diagnóstico presuntivo guardado (id: {{id}}, CIE-10: ${codigo}).`,
+          createdAt: new Date().toISOString(),
+        };
+        const ackText =
+          `Voy a crear un diagnóstico presuntivo:\n` +
+          `  • episodio: ${activeEpisodeId}\n` +
+          `  • CIE-10: ${codigo}\n` +
+          `  • descripción: ${desc}\n` +
+          `  • tipo: presuntivo\n\n` +
+          `¿Confirmas? (sí / no)\n` +
+          `_(Para definitivo necesitarás evidencia AP — D-Aux-2.)_`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          pending_action: session.pending_action,
+        });
+      }
+
       // ── Stage "/escalar a <user-uuid> <razón>" behind gate ──
       const escalateMatch = message.trim().match(/^\/?\s*escalar\s+a\s+([0-9a-f-]{36})\s+(.+)$/i);
       if (escalateMatch && activeEpisodeId) {
