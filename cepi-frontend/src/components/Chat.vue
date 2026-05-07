@@ -48,7 +48,13 @@
       </div>
     </aside>
 
-    <section class="main">
+    <section
+      class="main"
+      :class="{ 'drag-over': dragOver }"
+      @dragover.prevent="dragOver = true"
+      @dragleave.prevent="dragOver = false"
+      @drop.prevent="onDrop"
+    >
       <div class="feed" ref="feedEl">
         <div v-for="(t, i) in turns" :key="i" :class="['turn', t.role]">
           <span class="role">{{ labelFor(t.role) }}</span>
@@ -118,6 +124,7 @@ const activeEpisode = ref(null);
 const pending = ref(null);
 const patientLabel = ref('');
 const episodeLabel = ref('');
+const dragOver = ref(false);
 const feedEl = ref(null);
 
 function labelFor(role) {
@@ -171,20 +178,31 @@ function onSubmit() {
   send(payload);
 }
 
-async function onFile(ev) {
-  const file = ev.target.files?.[0];
-  ev.target.value = '';
-  if (!file) return;
+async function uploadOne(file) {
   uploading.value = true;
   error.value = '';
   try {
-    const att = await uploadAttachment(file);
-    pendingAttachment.value = att;
+    pendingAttachment.value = await uploadAttachment(file);
   } catch (e) {
     error.value = `Subida falló: ${e.message || e}`;
   } finally {
     uploading.value = false;
   }
+}
+async function onFile(ev) {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (file) await uploadOne(file);
+}
+async function onDrop(ev) {
+  dragOver.value = false;
+  const file = ev.dataTransfer?.files?.[0];
+  if (!file) return;
+  if (!/^image\//.test(file.type)) {
+    error.value = 'Solo imágenes (jpg, png, etc.)';
+    return;
+  }
+  await uploadOne(file);
 }
 
 async function resolveLabel(id, fields) {
@@ -259,7 +277,9 @@ onMounted(async () => {
   display: flex; flex-direction: column; gap: 12px;
   background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;
   min-height: 0;
+  transition: background 80ms ease;
 }
+.main.drag-over { background: #ecfdf5; border-color: #10b981; }
 .feed { flex: 1; overflow: auto; padding-right: 4px; }
 .turn { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px dashed #e2e8f0; }
 .turn .role {
