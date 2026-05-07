@@ -121,7 +121,8 @@ export class StubLLMAdapter implements LLMAdapter {
           '',
           '**Lectura rápida**',
           '  whoami | definitions | pacientes | episodios | diagnósticos',
-          '  cie10 <texto>               → busca código CIE-10 por descripción',
+          '  buscar paciente <texto>            → entities.list filtrado',
+          '  cie10 <texto>                      → busca código CIE-10 por descripción',
           '',
           '**Confirmación**',
           '  sí / ok / confirmar / adelante / yes',
@@ -146,6 +147,14 @@ export class StubLLMAdapter implements LLMAdapter {
     if (has('pacientes', 'patients', '/patients')) {
       // patient entity_definition has UUID prefix 11000000-...
       return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '11000000-0000-0000-0000-000000000000', limit: 20 } } };
+    }
+    const buscarPac = (last?.content || '').match(/^\s*\/?\s*buscar\s+paciente\s+(.+?)\s*$/i);
+    if (buscarPac) {
+      return { kind: 'tool_call', tool: { name: 'entities.list', args: {
+        type: '11000000-0000-0000-0000-000000000000',
+        search: buscarPac[1],
+        limit: 10,
+      } } };
     }
     if (has('episodios', 'episodes')) {
       return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '12000000-0000-0000-0000-000000000000', limit: 20 } } };
