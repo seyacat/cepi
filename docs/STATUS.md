@@ -80,6 +80,13 @@ R5 Phase B (rename de keys en data JSONB existente) deferida — necesita ventan
 - [x] PUT con validación parcial
 - [x] `/help` autodescubrible
 - [x] `ver paciente` / `ver episodio` shortcuts
+- [x] `nota <texto>` + `ver chatter`
+- [x] `signs PA=… FC=… T=…` (signos vitales con gate)
+- [x] `diagnostico <CIE10> <descripción>` con gate
+- [x] `resumen` de paciente
+- [x] `exportar [anonimizado]` JSON download
+- [x] Auditoría: chatter note tras cada confirmación (R6 + bot)
+- [x] PII redaction outbound al LLM (PAPER §13.3.1)
 - [ ] Slot filling guiado por LLM (deferido — requiere DEEPSEEK_API_KEY)
 
 ### Fase 6 — clasificación de imagen ISIC
@@ -96,6 +103,8 @@ R5 Phase B (rename de keys en data JSONB existente) deferida — necesita ventan
 
 - [x] `/escalar a <user-uuid> <razón>` — escalación desde chat
 - [x] `revisiones` shortcut — bandeja de episodios `en_revisión_solicitada`
+- [x] `sugerir diagnostico` — clasificaciones ISIC → CIE-10 mapping
+- [x] `casos similares` — vectors.search sobre la imagen activa
 - [ ] Dashboards visuales agregados (TodoERP report_configs ya soporta esto, pendiente diseñar)
 - [ ] Auditoría visual de tool-calls del bot
 
@@ -117,7 +126,8 @@ R5 Phase B (rename de keys en data JSONB existente) deferida — necesita ventan
 | Paquete | Archivos | Pruebas |
 |---|---|---|
 | `TodoERP/backend` | 32 | 181/181 ✅ |
-| `cepi-bot` | 1 | 5/5 ✅ |
+| `cepi-frontend` | — | — (Vue, sin tests todavía) |
+| `cepi-bot` | 3 | 21/21 ✅ |
 
 Cero regresiones acumuladas a lo largo del refactor + Fase 1-6.
 
@@ -126,22 +136,45 @@ Cero regresiones acumuladas a lo largo del refactor + Fase 1-6.
 ## Comandos del bot disponibles
 
 ```
-/help                                             ← lista esto
-whoami | definitions | tools
-pacientes | episodios | diagnósticos | revisiones
+/help | tools
+
+# Lectura
+whoami | definitions
+pacientes | episodios | diagnósticos | revisiones | recordatorios
+buscar paciente <texto>
 cie10 <texto>
-activar paciente <uuid>     | salir paciente
-activar episodio <uuid>     | salir episodio
-ver paciente | ver episodio
-nuevo episodio <motivo>                           ← gate
-cerrar episodio [YYYY-MM-DD] [motivo]             ← gate
-/escalar a <user-uuid> <razón>                    ← gate
-sí / no                                           ← responde al gate
+ver paciente | ver episodio | ver chatter | resumen
+casos similares | sugerir diagnostico
+
+# Contexto
+activar paciente <uuid> | salir paciente
+activar episodio <uuid> | salir episodio
+
+# Escritura (todas detrás del gate sí/no)
+nuevo episodio <motivo>
+cerrar episodio [YYYY-MM-DD] [motivo]
+diagnostico <CIE10> <descripción>
+signs PA=120/80 FC=70 T=36.5 …
+/escalar a <user-uuid> <razón>
+nota <texto>
+📎 imagen → clinical_image
+
+# Reminders (directos, sin gate)
+completar reminder <uuid> [nota]
+cancelar reminder <uuid>
+snooze reminder <uuid> YYYY-MM-DD
+
+# Export
+exportar [anonimizado]   → descarga JSON
 ```
 
-Subir imagen desde el clip 📎 estando con paciente+episodio activos → crea
-`clinical_image` (gate). Luego el worker `clinicalImageProcessor`
-(si `cepi-isic` está arriba) embebe + clasifica.
+**UX del frontend:**
+- Botones de atajos en el panel lateral (incluyendo `bandeja revisión`, `casos similares`, `sugerir dx`, `recordatorios`, `⤓ exportar`).
+- Drag-and-drop de imágenes sobre el chat.
+- Botones inline `activar` en filas de listas de pacientes/episodios.
+- Panel **Pendiente** con Confirmar/Cancelar para todas las acciones gate.
+- Sidebar muestra nombre del paciente activo + UUID corto.
+- Hidrata sesión completa al recargar la página (turnos + activos + pending).
 
 ---
 
