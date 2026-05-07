@@ -38,3 +38,4 @@ frontend/generate-icons.mjs
 # Paper build artifacts (rendered from docs/PAPER.md)
 docs/PAPER.html
 docs/PAPER.pdf
+backups/
