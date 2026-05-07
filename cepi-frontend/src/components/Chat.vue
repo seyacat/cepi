@@ -35,6 +35,7 @@
         <button @click="send('ver episodio')"   :disabled="busy || !activeEpisode">ver episodio</button>
         <button @click="send('revisiones')"     :disabled="busy">bandeja revisión</button>
         <button @click="send('recordatorios')"  :disabled="busy">recordatorios</button>
+        <button @click="send('casos similares')" :disabled="busy || !activeEpisode">casos similares</button>
       </div>
     </aside>
 

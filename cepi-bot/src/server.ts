@@ -229,6 +229,53 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── "casos similares" — vector search over the latest image of the active episode ──
+      if (/^\s*\/?\s*(casos\s+similares|similares)\s*$/i.test(message.trim())) {
+        if (!activeEpisodeId) {
+          const ackText = 'Necesito un episodio activo. Usa "activar episodio <uuid>" primero.';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        // Find the most recent clinical_image whose data references this episode.
+        const list = await mcp.call('entities.list', {
+          type: '16000000-0000-0000-0000-000000000000',
+          search: activeEpisodeId,
+          limit: 5,
+        });
+        const img = Array.isArray(list.data) && list.data.length ? list.data[0] : null;
+        if (!img) {
+          const ackText = 'No encontré imágenes clínicas del episodio activo. Adjunta una primero (📎).';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const search = await mcp.call('vectors.search', {
+          model_id: 'isic-resnet50-v1',
+          entity_id: img.id,
+          k: 5,
+        });
+        const text = search.ok
+          ? `Casos similares a la imagen \`${img.id.slice(0,8)}…\` (modelo isic-resnet50-v1):`
+          : `No pude buscar similares: ${search.error || 'sin embedding aún (¿ya corrió el worker ISIC?)'}`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message },
+          { role: 'tool', tool_name: 'vectors.search',
+            content: JSON.stringify(search.ok ? search.data : { error: search.error }) },
+          { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text,
+          history: session.turns,
+          toolCalls: [{ name: 'vectors.search', args: { model_id: 'isic-resnet50-v1', entity_id: img.id, k: 5 }, result: search }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+        });
+      }
+
       // ── Stage "/diagnostico <CIE10> <descripcion>" (presuntivo by default) ──
       const diagMatch = message.trim().match(/^\/?\s*diagn[óo]stico\s+([A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?)\s+(.+)$/i);
       if (diagMatch && activeEpisodeId) {
