@@ -229,6 +229,42 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── reminder actions (no gate; reversible-ish) ──
+      const completeRem = message.trim().match(/^\/?\s*completar\s+reminder\s+([0-9a-f-]{36})\s*(.*)$/i);
+      if (completeRem) {
+        const r = await mcp.call('reminders.complete', { id: completeRem[1], result: completeRem[2] || 'Marcado como completado por el agente' });
+        const text = r.ok ? `Recordatorio ${completeRem[1]} marcado como completado.` : `No pude completar: ${r.error}`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'reminders.complete', args: { id: completeRem[1] }, result: r }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+      const cancelRem = message.trim().match(/^\/?\s*cancelar\s+reminder\s+([0-9a-f-]{36})\s*$/i);
+      if (cancelRem) {
+        const r = await mcp.call('reminders.cancel', { id: cancelRem[1] });
+        const text = r.ok ? `Recordatorio ${cancelRem[1]} cancelado.` : `No pude cancelar: ${r.error}`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'reminders.cancel', args: { id: cancelRem[1] }, result: r }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+      const snoozeRem = message.trim().match(/^\/?\s*snooze\s+reminder\s+([0-9a-f-]{36})\s+([0-9]{4}-[0-9]{2}-[0-9]{2})\s*$/i);
+      if (snoozeRem) {
+        const until = `${snoozeRem[2]}T09:00:00.000Z`;
+        const r = await mcp.call('reminders.snooze', { id: snoozeRem[1], until });
+        const text = r.ok ? `Recordatorio ${snoozeRem[1]} pospuesto hasta ${snoozeRem[2]}.` : `No pude posponer: ${r.error}`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'reminders.snooze', args: { id: snoozeRem[1], until }, result: r }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
       // ── "casos similares" — vector search over the latest image of the active episode ──
       if (/^\s*\/?\s*(casos\s+similares|similares)\s*$/i.test(message.trim())) {
         if (!activeEpisodeId) {
