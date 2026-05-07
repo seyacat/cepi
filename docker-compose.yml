@@ -35,8 +35,8 @@ services:
 
   todoerp-backend:
     build:
-      context: ./TodoERP/backend
-      dockerfile: Dockerfile
+      context: ./TodoERP
+      dockerfile: backend/Dockerfile
     container_name: cepi-todoerp-backend
     depends_on:
       postgres:

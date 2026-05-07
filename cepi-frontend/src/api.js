@@ -33,6 +33,7 @@ export async function login(email, password) {
 export function logout() {
   localStorage.removeItem('cepi.jwt');
   localStorage.removeItem('cepi.session_id');
+  // Future: hit a /api/bot/logout to mark bot_session.estado = 'cerrada'.
 }
 
 export function loadSessionId() {
