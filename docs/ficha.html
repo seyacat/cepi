@@ -145,7 +145,50 @@
   .caract-item > span { white-space: nowrap; }
   .caract-item > input { flex: 1; min-width: 0; }
   .caract-full { grid-column: 1 / -1; }
-  .silhouettes img { width: 100%; height: auto; display: block; object-fit: contain; margin: 0 auto; }
+  .silhouettes { display: flex; justify-content: center; align-items: flex-start; }
+  .silhouettes-wrap { position: relative; width: 100%; line-height: 0; }
+  .silhouettes img { width: 100%; height: auto; display: block; }
+  .region-map { position: absolute; inset: 0; pointer-events: none; line-height: normal; }
+  .region {
+    position: absolute;
+    border: 1px solid transparent;
+    background: transparent;
+    pointer-events: auto;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .region:hover { border-color: #d33; background: rgba(221,51,51,.10); }
+  /* Debug mode: borde permanente y cursor de mover */
+  body.debug-regions .region { border-color: #d33; background: rgba(221,51,51,.06); cursor: move; }
+  body.debug-regions .region:hover { background: rgba(221,51,51,.18); }
+  .region.editing { background: rgba(221,51,51,.25) !important; border-color: #f00 !important; z-index: 10; }
+  .region .handle {
+    position: absolute; width: 8px; height: 8px;
+    background: #d33; border: 1px solid #fff;
+    pointer-events: auto;
+    display: none;
+  }
+  body.debug-regions .region:hover .handle, .region.editing .handle { display: block; }
+  .region .handle.nw { left: -4px; top: -4px;     cursor: nwse-resize; }
+  .region .handle.ne { right: -4px; top: -4px;    cursor: nesw-resize; }
+  .region .handle.sw { left: -4px; bottom: -4px;  cursor: nesw-resize; }
+  .region .handle.se { right: -4px; bottom: -4px; cursor: nwse-resize; }
+  .region .handle.n  { left: 50%; top: -4px;    margin-left: -4px; cursor: ns-resize; }
+  .region .handle.s  { left: 50%; bottom: -4px; margin-left: -4px; cursor: ns-resize; }
+  .region .handle.w  { top: 50%; left: -4px;    margin-top: -4px;  cursor: ew-resize; }
+  .region .handle.e  { top: 50%; right: -4px;   margin-top: -4px;  cursor: ew-resize; }
+  .region::after {
+    content: attr(data-region);
+    position: absolute;
+    bottom: 100%; left: 50%; transform: translateX(-50%);
+    background: #d33; color: #fff;
+    font-size: 6.5pt; padding: 1px 3px; border-radius: 2px;
+    white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity .12s;
+  }
+  .region:hover::after { opacity: 1; }
+  /* Print: ocultar overlay debug */
+  @media print { .region-map { display: none; } }
   .grav-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
   .grav-table th, .grav-table td { padding: 3px 4px; text-align: center; font-size: 9.5pt; }
   .grav-table th:first-child, .grav-table td:first-child { text-align: left; font-weight: 700; }
@@ -426,7 +469,57 @@
 
         <!-- ===== Columna central: siluetas ===== -->
         <div class="col col-mid silhouettes">
+         <div class="silhouettes-wrap">
           <img src="cuerpos.png" alt="Siluetas anterior y posterior">
+          <!--
+            Mapa de regiones (overlay debug). Coords en % del bbox de la imagen.
+            Imagen real: 177x172 px. Cuerpo anterior centrado en x≈26%, posterior en x≈74%.
+            Lateralidad anatómica: anterior izq paciente = visualmente derecha; posterior, directo.
+          -->
+          <div class="region-map" aria-hidden="false">
+            <!-- ===== VISTA ANTERIOR (eje x ≈ 24%) ===== -->
+            <div class="region" data-region="Cabeza (frontal)"            data-key="cabeza_ant"        style="left:19.30%; top:2.00%;  width:9.57%; height:12.31%;"></div>
+            <div class="region" data-region="Cuello anterior"             data-key="cuello_ant"        style="left:22.00%; top:14.50%; width:4.50%; height:3.50%;"></div>
+            <div class="region" data-region="Hombro derecho (ant.)"       data-key="hombro_der_ant"    style="left:13.50%; top:18.00%; width:6.50%; height:4.50%;"></div>
+            <div class="region" data-region="Hombro izquierdo (ant.)"     data-key="hombro_izq_ant"    style="left:28.00%; top:18.00%; width:6.50%; height:4.50%;"></div>
+            <div class="region" data-region="Tórax"                       data-key="torax"             style="left:16.00%; top:22.50%; width:16.00%; height:13.00%;"></div>
+            <div class="region" data-region="Abdomen"                     data-key="abdomen"           style="left:17.00%; top:35.50%; width:14.00%; height:11.00%;"></div>
+            <div class="region" data-region="Pelvis / genitales"          data-key="pelvis_ant"        style="left:19.00%; top:46.50%; width:10.00%; height:6.00%;"></div>
+            <div class="region" data-region="Brazo derecho (ant.)"        data-key="brazo_der_ant"     style="left:9.00%;  top:22.50%; width:6.50%; height:14.00%;"></div>
+            <div class="region" data-region="Brazo izquierdo (ant.)"      data-key="brazo_izq_ant"     style="left:32.50%; top:22.50%; width:6.50%; height:14.00%;"></div>
+            <div class="region" data-region="Antebrazo derecho (ant.)"    data-key="antebrazo_der_ant" style="left:5.50%;  top:36.50%; width:7.00%; height:13.00%;"></div>
+            <div class="region" data-region="Antebrazo izquierdo (ant.)"  data-key="antebrazo_izq_ant" style="left:35.50%; top:36.50%; width:7.00%; height:13.00%;"></div>
+            <div class="region" data-region="Mano derecha"                data-key="mano_der"          style="left:2.15%;  top:49.50%; width:6.65%; height:8.50%;"></div>
+            <div class="region" data-region="Mano izquierda"              data-key="mano_izq"          style="left:39.20%; top:49.50%; width:9.20%; height:8.50%;"></div>
+            <div class="region" data-region="Muslo derecho (ant.)"        data-key="muslo_der_ant"     style="left:15.50%; top:52.50%; width:8.00%; height:21.00%;"></div>
+            <div class="region" data-region="Muslo izquierdo (ant.)"      data-key="muslo_izq_ant"     style="left:24.50%; top:52.50%; width:8.00%; height:21.00%;"></div>
+            <div class="region" data-region="Pierna derecha (ant.)"       data-key="pierna_der_ant"    style="left:14.00%; top:73.50%; width:7.20%; height:20.50%;"></div>
+            <div class="region" data-region="Pierna izquierda (ant.)"     data-key="pierna_izq_ant"    style="left:26.80%; top:73.50%; width:7.20%; height:20.50%;"></div>
+            <div class="region" data-region="Pie derecho"                 data-key="pie_der"           style="left:11.62%; top:94.00%; width:7.14%; height:6.00%;"></div>
+            <div class="region" data-region="Pie izquierdo"               data-key="pie_izq"           style="left:28.12%; top:94.00%; width:7.98%; height:6.00%;"></div>
+
+            <!-- ===== VISTA POSTERIOR (eje x ≈ 74.6%, offset +50.55% del anterior) ===== -->
+            <div class="region" data-region="Cabeza (posterior)"          data-key="cabeza_post"       style="left:69.85%; top:1.56%;  width:9.57%; height:11.44%;"></div>
+            <div class="region" data-region="Cuello posterior"            data-key="cuello_post"       style="left:72.55%; top:13.00%; width:4.50%; height:3.50%;"></div>
+            <div class="region" data-region="Hombro izquierdo (post.)"    data-key="hombro_izq_post"   style="left:64.05%; top:17.50%; width:6.50%; height:4.50%;"></div>
+            <div class="region" data-region="Hombro derecho (post.)"      data-key="hombro_der_post"   style="left:78.55%; top:17.50%; width:6.50%; height:4.50%;"></div>
+            <div class="region" data-region="Espalda alta"                data-key="espalda_alta"      style="left:66.55%; top:22.00%; width:16.00%; height:13.00%;"></div>
+            <div class="region" data-region="Espalda baja / lumbar"       data-key="lumbar"            style="left:67.55%; top:35.00%; width:14.00%; height:11.00%;"></div>
+            <div class="region" data-region="Glúteos"                     data-key="gluteos"           style="left:69.55%; top:46.00%; width:10.00%; height:6.50%;"></div>
+            <div class="region" data-region="Brazo izquierdo (post.)"     data-key="brazo_izq_post"    style="left:59.55%; top:22.00%; width:6.50%; height:14.00%;"></div>
+            <div class="region" data-region="Brazo derecho (post.)"       data-key="brazo_der_post"    style="left:83.05%; top:22.00%; width:6.50%; height:14.00%;"></div>
+            <div class="region" data-region="Antebrazo izquierdo (post.)" data-key="antebrazo_izq_post" style="left:56.05%; top:36.00%; width:7.00%; height:13.00%;"></div>
+            <div class="region" data-region="Antebrazo derecho (post.)"   data-key="antebrazo_der_post" style="left:86.05%; top:36.00%; width:7.00%; height:13.00%;"></div>
+            <div class="region" data-region="Mano izquierda (dorso)"      data-key="mano_izq_dorso"    style="left:52.70%; top:49.00%; width:6.65%; height:8.50%;"></div>
+            <div class="region" data-region="Mano derecha (dorso)"        data-key="mano_der_dorso"    style="left:89.32%; top:49.00%; width:8.77%; height:8.50%;"></div>
+            <div class="region" data-region="Muslo izquierdo (post.)"     data-key="muslo_izq_post"    style="left:65.19%; top:52.50%; width:7.56%; height:21.00%;"></div>
+            <div class="region" data-region="Muslo derecho (post.)"       data-key="muslo_der_post"    style="left:75.90%; top:52.50%; width:8.85%; height:21.00%;"></div>
+            <div class="region" data-region="Pierna izquierda (post.)"    data-key="pierna_izq_post"   style="left:64.55%; top:73.50%; width:7.20%; height:20.50%;"></div>
+            <div class="region" data-region="Pierna derecha (post.)"      data-key="pierna_der_post"   style="left:77.35%; top:73.50%; width:7.20%; height:20.50%;"></div>
+            <div class="region" data-region="Pie izquierdo (planta)"      data-key="pie_izq_planta"    style="left:62.60%; top:94.00%; width:6.30%; height:6.00%;"></div>
+            <div class="region" data-region="Pie derecho (planta)"        data-key="pie_der_planta"    style="left:79.10%; top:94.00%; width:7.14%; height:6.00%;"></div>
+          </div>
+         </div>
         </div>
 
         <!-- ===== Columna derecha: 4.4 gravedad + 4.5 patrón ===== -->
@@ -607,6 +700,129 @@ function readFicha() {
 
 window.fillFicha = fillFicha;
 window.readFicha = readFicha;
+
+/* ============================================================================
+ * Edición interactiva de regiones (modo debug)
+ *   - Click + drag para mover una región.
+ *   - Drag de los handles (4 esquinas + 4 lados) para redimensionar.
+ *   - Al soltar el mouse, la nueva geometría se imprime al console.log
+ *     en el mismo formato del HTML (left/top/width/height en %).
+ *   - Tecla `D`: dump de TODAS las regiones actuales.
+ *   - Tecla `H`: oculta/muestra el overlay (sin afectar el PDF).
+ * ========================================================================== */
+(function regionEditor() {
+  const map = document.querySelector('.region-map');
+  if (!map) return;
+
+  // Inyectar handles a cada región
+  const HANDLE_NAMES = ['nw','n','ne','e','se','s','sw','w'];
+  document.querySelectorAll('.region').forEach(r => {
+    HANDLE_NAMES.forEach(h => {
+      const el = document.createElement('div');
+      el.className = 'handle ' + h;
+      el.dataset.handle = h;
+      r.appendChild(el);
+    });
+  });
+
+  const fmt = n => (Math.round(n * 100) / 100).toFixed(2);
+  const dumpRegion = (r) => {
+    const key = r.dataset.key || '?';
+    const name = r.dataset.region || '?';
+    const left = parseFloat(r.style.left);
+    const top  = parseFloat(r.style.top);
+    const w    = parseFloat(r.style.width);
+    const h    = parseFloat(r.style.height);
+    const styleStr = `left:${fmt(left)}%; top:${fmt(top)}%; width:${fmt(w)}%; height:${fmt(h)}%;`;
+    console.log(`[region] ${key.padEnd(22)} ${styleStr}  // ${name}`);
+    return { key, name, left, top, w, h, styleStr };
+  };
+
+  let active = null;       // { region, mode, startX, startY, startBox }
+  const getRect = () => map.getBoundingClientRect();
+
+  document.addEventListener('mousedown', (e) => {
+    if (!document.body.classList.contains('debug-regions')) return;
+    const handle = e.target.closest('.handle');
+    const region = e.target.closest('.region');
+    if (!region) return;
+    e.preventDefault();
+    const rect = getRect();
+    const r = region.getBoundingClientRect();
+    active = {
+      region,
+      mode: handle ? handle.dataset.handle : 'move',
+      startX: e.clientX, startY: e.clientY,
+      startLeft: ((r.left - rect.left) / rect.width) * 100,
+      startTop:  ((r.top  - rect.top)  / rect.height) * 100,
+      startW:    (r.width  / rect.width) * 100,
+      startH:    (r.height / rect.height) * 100,
+      mapW: rect.width, mapH: rect.height,
+    };
+    region.classList.add('editing');
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!active) return;
+    const dx = ((e.clientX - active.startX) / active.mapW) * 100;
+    const dy = ((e.clientY - active.startY) / active.mapH) * 100;
+    let { startLeft: l, startTop: t, startW: w, startH: h } = active;
+    const m = active.mode;
+    if (m === 'move') { l += dx; t += dy; }
+    if (m.includes('e')) w += dx;
+    if (m.includes('s')) h += dy;
+    if (m.includes('w')) { l += dx; w -= dx; }
+    if (m.includes('n')) { t += dy; h -= dy; }
+    if (w < 0.5) w = 0.5;
+    if (h < 0.5) h = 0.5;
+    Object.assign(active.region.style, {
+      left:   l.toFixed(2) + '%',
+      top:    t.toFixed(2) + '%',
+      width:  w.toFixed(2) + '%',
+      height: h.toFixed(2) + '%',
+    });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!active) return;
+    active.region.classList.remove('editing');
+    dumpRegion(active.region);
+    active = null;
+  });
+
+  // Tecla E: toggle debug. D: dump. H: ocultar overlay.
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches('input, textarea')) return;
+    if (e.key === 'e' || e.key === 'E') {
+      const on = document.body.classList.toggle('debug-regions');
+      console.log('%c[region-editor] debug ' + (on ? 'ON' : 'OFF'), 'color:#d33;font-weight:bold');
+    }
+    if (e.key === 'd' || e.key === 'D') {
+      console.log('===== DUMP DE REGIONES =====');
+      const all = [...document.querySelectorAll('.region')].map(dumpRegion);
+      console.log('===== FIN DUMP (' + all.length + ' regiones) =====');
+      // También copiable: HTML listo para pegar
+      const html = all.map(({key, name, styleStr}) =>
+        `<div class="region" data-region="${name}" data-key="${key}" style="${styleStr}"></div>`
+      ).join('\n');
+      console.log(html);
+      window.__lastRegionsHTML = html;
+      navigator.clipboard?.writeText(html).then(
+        () => console.log('(HTML copiado al portapapeles)'),
+        () => {}
+      );
+    }
+    if (e.key === 'h' || e.key === 'H') {
+      map.style.display = (map.style.display === 'none') ? '' : 'none';
+    }
+  });
+
+  console.log('%c[region-editor] cargado','color:#d33;font-weight:bold');
+  console.log('  • Tecla E → toggle modo debug (mostrar/editar regiones).');
+  console.log('  • En debug: drag región → mover, drag handle → redimensionar.');
+  console.log('  • Tecla D → dump completo (HTML al portapapeles).');
+  console.log('  • Tecla H → toggle overlay.');
+})();
 </script>
 </body>
 </html>
