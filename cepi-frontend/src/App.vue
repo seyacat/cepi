@@ -1,11 +1,23 @@
 <template>
   <div class="app">
     <header class="topbar">
-      <strong>CEPI · Asistente clínico</strong>
-      <span v-if="user" class="user">{{ user.email }} ({{ user.role }})
-        <button @click="toggleDark" :title="dark ? 'Modo claro' : 'Modo oscuro'">{{ dark ? '☀' : '☾' }}</button>
-        <button @click="onLogout">Salir</button>
-      </span>
+      <div class="header-left">
+        <img
+          class="logo"
+          src="https://cepi.ec/wp-content/uploads/2022/12/logo-cepi-final-min.png"
+          alt="CEPI Centro de la Piel"
+        />
+      </div>
+      <div class="header-center">
+        <strong class="brand">Asistente clínico</strong>
+      </div>
+      <div class="header-right">
+        <span v-if="user" class="user">
+          <span class="user-id">{{ user.email }} · {{ user.role }}</span>
+          <button @click="toggleDark" :title="dark ? 'Modo claro' : 'Modo oscuro'">{{ dark ? '☀' : '☾' }}</button>
+          <button @click="onLogout">Salir</button>
+        </span>
+      </div>
     </header>
     <main>
       <Login v-if="!authed" @logged-in="onLoggedIn" />
@@ -59,14 +71,63 @@ onMounted(refresh);
 </script>
 
 <style>
-.app { max-width: 960px; margin: 0 auto; }
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  width: 100%;
+}
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 20px; border-bottom: 1px solid #e2e8f0; background: #fff;
+  width: 100%;
+  height: var(--header-h);
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 1.25rem;
+  background: var(--accent-band);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #fff;
 }
-.topbar .user { font-size: 14px; color: #64748b; display: flex; gap: 12px; align-items: center; }
+.header-left  { display: flex; align-items: center; }
+.header-center { display: flex; align-items: center; justify-content: center; }
+.header-right { display: flex; align-items: center; justify-content: flex-end; }
+
+.logo { height: 38px; object-fit: contain; display: block; }
+.brand { color: #fff; letter-spacing: 0.02em; font-size: 1rem; }
+
+.topbar .user {
+  display: flex; gap: 10px; align-items: center;
+  font-size: 0.82rem; color: #fff;
+}
+.user-id { opacity: 0.92; }
 .topbar .user button {
-  background: transparent; border: 1px solid #cbd5e1; padding: 4px 10px; border-radius: 4px; color: #475569;
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  border: 1.5px solid rgba(255,255,255,0.45);
+  padding: 0.3rem 0.85rem;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+  transition: background 0.2s, border-color 0.2s;
 }
-main { padding: 24px 20px; }
+.topbar .user button:hover {
+  background: rgba(255,255,255,0.30);
+  border-color: rgba(255,255,255,0.7);
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .topbar { padding: 0 0.75rem; }
+  .user-id { display: none; }
+  main { padding: 0; }
+}
 </style>

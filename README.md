@@ -10,6 +10,7 @@ Repositorio mono que agrupa cuatro componentes que trabajan juntos:
 | `backend/` (legacy) | Chatbot CEPI original (DeepSeek + tree.js). Sin PM2; será reemplazado | — |
 
 Toda la arquitectura, decisiones y plan de fases están en [`docs/PAPER.md`](docs/PAPER.md).
+Estado actual de fases en [`docs/STATUS.md`](docs/STATUS.md). Manual de operaciones (backup, restore, runbook, hardening) en [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 La deuda técnica resuelta de TodoERP en [`TodoERP/docs/REFACTOR_PLAN.md`](TodoERP/docs/REFACTOR_PLAN.md).
 
 ---

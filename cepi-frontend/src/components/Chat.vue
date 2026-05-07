@@ -1,6 +1,13 @@
 <template>
-  <div class="chat-wrap">
-    <aside class="side">
+  <div class="chat-wrap" :class="{ 'side-open': sideOpen }">
+    <button
+      class="side-toggle"
+      type="button"
+      @click="sideOpen = !sideOpen"
+      :aria-label="sideOpen ? 'Cerrar menú' : 'Abrir menú'"
+    >☰</button>
+    <div class="side-backdrop" @click="sideOpen = false" aria-hidden="true"></div>
+    <aside class="side" @click="onSideClick">
       <h3>Sesión</h3>
       <p class="muted" v-if="sessionId">id: {{ sessionId.slice(0, 8) }}…</p>
       <p class="muted" v-else>nueva</p>
@@ -56,52 +63,71 @@
       @dragleave.prevent="dragOver = false"
       @drop.prevent="onDrop"
     >
-      <div class="feed" ref="feedEl">
-        <div v-for="(t, i) in turns" :key="i" :class="['turn', t.role]">
-          <span class="role">{{ labelFor(t.role) }}</span>
-          <ToolResult v-if="t.role === 'tool'" :tool-name="t.tool_name || ''" :raw-content="t.content" @action="send" />
-          <pre v-else class="content">{{ t.content }}</pre>
+      <div class="scroll-area" ref="feedEl" @scroll.passive="onScrollAreaScroll">
+        <div class="inner">
+          <div class="welcome">
+            <img
+              class="welcome-logo"
+              src="https://cepi.ec/wp-content/uploads/2022/12/logo-cepi-final-min.png"
+              alt="CEPI"
+            />
+            <p>
+              Hola, soy el asistente virtual de<br />
+              <strong>CEPI Centro de la Piel</strong>.<br />
+              ¿En qué puedo ayudarte hoy?
+            </p>
+          </div>
+
+          <div class="messages">
+            <div v-for="(t, i) in turns" :key="i" :class="['turn', t.role]">
+              <span class="role">{{ labelFor(t.role) }}</span>
+              <ToolResult v-if="t.role === 'tool'" :tool-name="t.tool_name || ''" :raw-content="t.content" @action="send" />
+              <pre v-else class="content">{{ t.content }}</pre>
+            </div>
+            <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>
+          </div>
+
+          <div v-if="pending" class="pending-card">
+            <div class="pending-head">
+              <span class="pending-tag">Pendiente</span>
+              <code class="pending-tool">{{ pending.tool }}</code>
+            </div>
+            <p class="pending-summary">{{ pending.summary }}</p>
+            <div class="pending-actions">
+              <button class="confirm" @click="send('sí')" :disabled="busy">✓ Confirmar</button>
+              <button class="cancel"  @click="send('no')" :disabled="busy">✗ Cancelar</button>
+            </div>
+          </div>
+
+          <form class="composer" @submit.prevent="onSubmit" ref="composerEl">
+            <textarea
+              v-model="draft"
+              rows="2"
+              placeholder="Escribe un mensaje. Enter envía, Shift+Enter agrega salto de línea. Adjunta una imagen 📎 o arrástrala al chat."
+              @keydown="onKeyDown"
+            />
+            <div class="composer-actions">
+              <label class="upload-btn" :class="{ disabled: busy || uploading }">
+                📎
+                <input type="file" accept="image/*" @change="onFile" :disabled="busy || uploading" />
+              </label>
+              <button type="submit" :disabled="busy || (!draft.trim() && !pendingAttachment)">
+                {{ uploading ? 'Subiendo…' : 'Enviar' }}
+              </button>
+            </div>
+          </form>
+
+          <p v-if="pendingAttachment" class="attached">
+            Adjunto listo: <strong>{{ pendingAttachment.original_name || pendingAttachment.filename }}</strong>
+            ({{ Math.round(pendingAttachment.size / 1024) }} KB)
+            <button type="button" @click="pendingAttachment = null" class="link">quitar</button>
+          </p>
+
+          <p v-if="error" class="error">{{ error }}</p>
+
+          <div class="bottom-spacer" aria-hidden="true"></div>
         </div>
-        <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>
       </div>
-
-      <div v-if="pending" class="pending-card">
-        <div class="pending-head">
-          <span class="pending-tag">Pendiente</span>
-          <code class="pending-tool">{{ pending.tool }}</code>
-        </div>
-        <p class="pending-summary">{{ pending.summary }}</p>
-        <div class="pending-actions">
-          <button class="confirm" @click="send('sí')" :disabled="busy">✓ Confirmar</button>
-          <button class="cancel"  @click="send('no')" :disabled="busy">✗ Cancelar</button>
-        </div>
-      </div>
-
-      <form class="composer" @submit.prevent="onSubmit">
-        <textarea
-          v-model="draft"
-          rows="2"
-          placeholder="Escribe un mensaje. Enter envía, Shift+Enter agrega salto de línea. Adjunta una imagen 📎 o arrástrala al chat."
-          @keydown="onKeyDown"
-        />
-        <div class="composer-actions">
-          <label class="upload-btn" :class="{ disabled: busy || uploading }">
-            📎
-            <input type="file" accept="image/*" @change="onFile" :disabled="busy || uploading" />
-          </label>
-          <button type="submit" :disabled="busy || (!draft.trim() && !pendingAttachment)">
-            {{ uploading ? 'Subiendo…' : 'Enviar' }}
-          </button>
-        </div>
-      </form>
-
-      <p v-if="pendingAttachment" class="attached">
-        Adjunto listo: <strong>{{ pendingAttachment.original_name || pendingAttachment.filename }}</strong>
-        ({{ Math.round(pendingAttachment.size / 1024) }} KB)
-        <button type="button" @click="pendingAttachment = null" class="link">quitar</button>
-      </p>
-
-      <p v-if="error" class="error">{{ error }}</p>
     </section>
   </div>
 </template>
@@ -127,14 +153,39 @@ const patientLabel = ref('');
 const episodeLabel = ref('');
 const dragOver = ref(false);
 const feedEl = ref(null);
+const composerEl = ref(null);
+const sideOpen = ref(false);
+
+function onSideClick(ev) {
+  // Auto-close the sidebar on mobile after picking a shortcut.
+  if (ev.target.closest('button') && window.matchMedia('(max-width: 768px)').matches) {
+    sideOpen.value = false;
+  }
+}
 
 function labelFor(role) {
   return ({ user: 'Tú', assistant: 'Bot', tool: 'Tool', system: 'Sistema' })[role] || role;
 }
 
-async function scrollToEnd() {
+// Track whether the user is "stuck to the bottom". If they scroll up to read,
+// we stop yanking them down on each turn / streamed chunk.
+const STICK_THRESHOLD_PX = 120;
+let stickToBottom = true;
+
+function onScrollAreaScroll() {
+  const el = feedEl.value;
+  if (!el) return;
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  stickToBottom = distanceFromBottom <= STICK_THRESHOLD_PX;
+}
+
+async function scrollToEnd({ force = false } = {}) {
+  if (!force && !stickToBottom) return;
   await nextTick();
-  if (feedEl.value) feedEl.value.scrollTop = feedEl.value.scrollHeight;
+  const el = feedEl.value;
+  if (!el) return;
+  // Instant scroll — no smooth animation, so streamed updates don't visibly jump.
+  el.scrollTop = el.scrollHeight;
 }
 
 async function send(message) {
@@ -143,7 +194,6 @@ async function send(message) {
   error.value = '';
   // Optimistically render the user turn while waiting.
   turns.value = [...turns.value, { role: 'user', content: message }];
-  scrollToEnd();
   try {
     const r = await chat(message, sessionId.value);
     if (r?.session_id) {
@@ -174,7 +224,6 @@ async function send(message) {
     error.value = e.message || String(e);
   } finally {
     busy.value = false;
-    scrollToEnd();
   }
 }
 
@@ -270,17 +319,78 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.chat-wrap { display: grid; grid-template-columns: 220px 1fr; gap: 16px; height: calc(100vh - 80px); }
-.side {
-  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;
-  font-size: 14px;
+.chat-wrap {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
+  height: calc(100dvh - var(--header-h) - 24px);
+  position: relative;
 }
-.side h3 { font-size: 13px; text-transform: uppercase; color: #64748b; margin: 0 0 8px; letter-spacing: .04em; }
+.side-toggle {
+  display: none;
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 30;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: rgba(255,255,255,0.92);
+  color: var(--accent);
+  font-size: 1.1rem; font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+.side-backdrop {
+  display: none;
+  position: fixed;
+  inset: var(--header-h) 0 0 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 20;
+}
+
+@media (max-width: 768px) {
+  .chat-wrap {
+    grid-template-columns: 1fr;
+    gap: 0;
+    height: calc(100dvh - var(--header-h));
+  }
+  .side-toggle { display: flex; align-items: center; justify-content: center; }
+  .side {
+    position: fixed;
+    top: var(--header-h);
+    left: 0;
+    height: calc(100dvh - var(--header-h));
+    width: 80vw; max-width: 300px;
+    z-index: 25;
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    overflow-y: auto;
+  }
+  .chat-wrap.side-open .side { transform: translateX(0); }
+  .chat-wrap.side-open .side-backdrop { display: block; }
+  .main { border-radius: 0; border-left: 0; border-right: 0; }
+}
+.side {
+  background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+  font-size: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.side h3 {
+  font-size: 12px; text-transform: uppercase; color: var(--accent);
+  margin: 0 0 8px; letter-spacing: .04em; font-weight: 700;
+}
 .shortcuts { display: flex; flex-direction: column; gap: 6px; }
 .shortcuts button {
-  border: 1px solid #cbd5e1; background: #f8fafc; color: #334155;
-  padding: 6px 10px; border-radius: 4px; text-align: left;
+  border: 1.5px solid var(--border); background: #f8fafc; color: var(--text);
+  padding: 0.4rem 0.85rem; border-radius: 18px; text-align: left;
+  font-weight: 600; font-size: 0.82rem;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
+.shortcuts button:hover:not(:disabled) {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.shortcuts button:disabled { opacity: .5; cursor: not-allowed; }
 .muted { color: #94a3b8; font-size: 12px; word-break: break-all; }
 
 .ctx { display: flex; flex-direction: column; gap: 6px; }
@@ -292,41 +402,127 @@ onMounted(async () => {
 .ctx .link { background: transparent; color: #94a3b8; border: 0; padding: 0; cursor: pointer; }
 
 .main {
-  display: flex; flex-direction: column; gap: 12px;
-  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;
-  min-height: 0;
+  display: flex; flex-direction: column;
+  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  min-height: 0; overflow: hidden;
   transition: background 80ms ease;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
 }
-.main.drag-over { background: #ecfdf5; border-color: #10b981; }
-.feed { flex: 1; overflow: auto; padding-right: 4px; }
-.turn { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px dashed #e2e8f0; }
+.main.drag-over { background: #fff7ed; border-color: var(--accent); }
+
+/* Scrollable area: holds the centered "inner" wrapper.
+   When inner content < scroll height, margin:auto centers it (welcome state).
+   When content > scroll height, the bottom-spacer (50dvh) lets the user
+   scroll the composer up to the vertical center, leaving room for the
+   mobile keyboard. */
+.scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.inner {
+  margin-top: auto;
+  margin-bottom: auto;
+  width: 100%;
+  max-width: 800px;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.messages { display: flex; flex-direction: column; gap: 0.85rem; }
+.bottom-spacer { height: 50dvh; flex-shrink: 0; }
+
+.welcome {
+  display: flex; flex-direction: column; align-items: center; gap: 0.9rem;
+  padding: 2rem 1.5rem 1.5rem; text-align: center; margin: auto;
+}
+.welcome-logo {
+  width: 200px; max-width: 55vw; object-fit: contain;
+  background: var(--accent-band); border-radius: 10px; padding: 0.6rem 1.2rem;
+}
+.welcome p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.7; }
+
+.turn {
+  display: flex; flex-direction: column; gap: 4px; max-width: 82%;
+  padding: 0;
+}
 .turn .role {
-  flex: 0 0 60px; font-weight: 600; font-size: 12px; text-transform: uppercase;
-  color: #64748b; padding-top: 2px;
+  font-weight: 700; font-size: 11px; text-transform: uppercase;
+  color: var(--text-muted); letter-spacing: .04em;
+  padding: 0 0.5rem;
 }
-.turn.user .role      { color: #1d4ed8; }
-.turn.assistant .role { color: #15803d; }
+.turn.user      { align-self: flex-end; align-items: flex-end; }
+.turn.assistant { align-self: flex-start; }
+.turn.tool      { align-self: flex-start; max-width: 95%; }
+.turn.user .role      { color: var(--accent); }
+.turn.assistant .role { color: var(--accent); }
 .turn.tool .role      { color: #a16207; }
-.content { flex: 1; margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 14px; }
+
+.content {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: inherit; font-size: 0.93rem; font-weight: 500;
+  padding: 0.7rem 1rem; border-radius: var(--radius); line-height: 1.6;
+}
+.turn.user .content {
+  background: var(--user-bg); color: var(--user-text);
+  border-bottom-right-radius: 4px;
+}
+.turn.assistant .content {
+  background: var(--bot-bg); color: var(--text);
+  border: 1px solid var(--border); border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
 .tool-name { font-size: 11px; color: #94a3b8; align-self: start; }
 
-.composer { display: flex; gap: 8px; }
+.composer {
+  display: flex; gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--accent-band);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: 16px;
+}
 .composer textarea {
-  flex: 1; resize: vertical; min-height: 56px;
-  padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 4px;
+  flex: 1; resize: none;
+  background: rgba(255,255,255,0.92);
+  color: #212121;
+  border: 1.5px solid var(--border); border-radius: 24px;
+  padding: 0.65rem 1.1rem;
+  font-size: 0.95rem; font-weight: 500;
+  outline: none;
+  max-height: 140px; overflow-y: auto;
+  transition: border-color 0.2s;
 }
-.composer-actions { display: flex; flex-direction: column; gap: 6px; }
-.composer button {
-  padding: 8px 16px; background: #6366f1; color: #fff; border: none;
-  border-radius: 4px; font-weight: 600;
+.composer textarea::placeholder { color: var(--text-muted); }
+.composer textarea:focus { border-color: var(--accent); }
+html[data-theme="dark"] .composer textarea {
+  background: rgba(255,255,255,0.92);
+  color: #212121;
 }
-.composer button[disabled] { opacity: .5; cursor: not-allowed; }
+.composer-actions { display: flex; gap: 6px; align-items: flex-end; }
+.composer button[type="submit"] {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 22px; min-width: 84px; height: 42px;
+  padding: 0 1rem; font-weight: 700;
+  transition: background 0.2s, transform 0.1s;
+}
+.composer button[type="submit"]:hover:not(:disabled) {
+  background: var(--accent-hover); transform: scale(1.03);
+}
+.composer button[disabled] { opacity: .55; cursor: not-allowed; transform: none; }
 .upload-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 40px; height: 36px; cursor: pointer;
-  border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc;
+  width: 42px; height: 42px; cursor: pointer;
+  border: 1.5px solid rgba(255,255,255,0.55); border-radius: 50%;
+  background: rgba(255,255,255,0.85);
   font-size: 18px;
+  transition: background 0.2s;
 }
+.upload-btn:hover:not(.disabled) { background: #fff; }
 .upload-btn input { display: none; }
 .upload-btn.disabled { opacity: .5; cursor: not-allowed; }
 .attached {

@@ -119,9 +119,9 @@ Cada `entity_<slug>` tiene columnas tipadas derivadas de `entity_definitions.con
 - [x] CORS configurable (R10)
 - [x] Privilege escalation prevention (R8 + assertCanGrant)
 - [ ] Pseudoanonimización de prompts antes de mandar al LLM (la idea: agente sin perm `pii:read:*` recibe data ya redactada por R4 al tirar tools)
-- [ ] Política de retención implementada vía reminders nocturnos
-- [ ] Backup automatizado de DB
-- [ ] Documentación operacional
+- [ ] Política de retención implementada vía reminders nocturnos (plantilla SQL documentada en `docs/OPERATIONS.md` §5; falta el job nocturno)
+- [x] Backup automatizado de DB (scripts `backup-db.sh` + `backup-db.ps1`; instrucciones de cron/Task Scheduler en `docs/OPERATIONS.md` §4)
+- [x] Documentación operacional (`docs/OPERATIONS.md`: topología, env, backup/restore, retención, runbook, hardening checklist)
 
 ---
 
