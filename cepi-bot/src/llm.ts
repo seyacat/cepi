@@ -105,6 +105,7 @@ export class StubLLMAdapter implements LLMAdapter {
           '  nuevo episodio <motivo>    → crea episodio para el paciente activo',
           '  cerrar episodio [YYYY-MM-DD] [motivo] → cierra episodio + reminder',
           '  diagnostico <CIE10> <descripción>  → crea diagnóstico presuntivo',
+          '  signs PA=120/80 FC=70 T=36.5 …    → guarda signos vitales en el episodio',
           '  /escalar a <user-uuid> <razón>     → escala episodio a colega',
           '  📎 (adjuntar imagen)        → crea clinical_image ligada al episodio',
           '  casos similares             → vectors.search sobre la última imagen del episodio',

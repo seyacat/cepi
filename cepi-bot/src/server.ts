@@ -400,6 +400,45 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
       }
 
+      // ── "/signs k=v k=v" — update signos_vitales on the active episode ──
+      const signsMatch = message.trim().match(/^\/?\s*signs?\s+(.+)$/i);
+      if (signsMatch && activeEpisodeId) {
+        const pairs = signsMatch[1].split(/\s+/).map(p => p.split('=')).filter(p => p.length === 2);
+        if (!pairs.length) {
+          const ackText = 'Formato: signs PA=120/80 FC=70 T=36.5 SatO2=98';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const sv: Record<string, string> = {};
+        for (const [k, v] of pairs) sv[k] = v;
+
+        const cur = await mcp.call('entities.get', { id: activeEpisodeId });
+        const curData = (cur.ok && cur.data?.data) ? { ...cur.data.data } : {};
+        delete (curData as any)._relations;
+        curData.signos_vitales = JSON.stringify(sv);
+
+        session.pending_action = {
+          summary: `Registrar signos vitales (${Object.keys(sv).join(', ')}) en el episodio activo`,
+          tool: 'entities.update',
+          args: { id: activeEpisodeId, record_type: 'business', data: curData },
+          successMessage: `Signos vitales guardados.`,
+          createdAt: new Date().toISOString(),
+        };
+        const ackText =
+          `Voy a registrar:\n` +
+          Object.entries(sv).map(([k, v]) => `  • ${k}: ${v}`).join('\n') +
+          `\n\n¿Confirmas? (sí / no)`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+          toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          pending_action: session.pending_action });
+      }
+
       // ── "sugerir diagnostico" — read classifications + map to CIE-10 ──
       if (/^\s*\/?\s*sugerir\s+diagn[óo]stico\s*$/i.test(message.trim())) {
         if (!activeEpisodeId) {
