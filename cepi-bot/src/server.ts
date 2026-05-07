@@ -37,6 +37,34 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ ok: true, service: 'cepi-bot', port: PORT, ts: new Date().toISOString() });
 });
 
+/**
+ * /api/bot/capabilities — debug helper. Spawns an MCP client with the
+ * caller's identity, lists tools, and reports the LLM provider in use.
+ */
+app.get('/api/bot/capabilities', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+    const tools = await mcp.listTools();
+
+    res.json({
+      ok: true,
+      llm_provider: process.env.CEPI_LLM_PROVIDER || 'stub',
+      todoerp_url:  process.env.TODOERP_API_URL  || 'http://localhost:3001',
+      tools: tools.map(t => ({ name: t.name, description: t.description })),
+    });
+  } catch (err) { next(err); }
+  finally {
+    if (mcp) await mcp.close().catch(() => {});
+  }
+});
+
 app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction) => {
   let mcp: TodoErpMcpClient | null = null;
   try {
