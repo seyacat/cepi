@@ -400,6 +400,20 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
       }
 
+      // ── "/logout" — close the bot session ──────────────────────
+      if (/^\s*\/?\s*logout\s*$/i.test(message.trim())) {
+        session.estado = 'cerrada';
+        session.active_patient_id = null;
+        session.active_episode_id = null;
+        session.pending_action = null;
+        const ackText = 'Sesión cerrada. Hasta luego.';
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+          toolCalls: [], active_patient_id: null, active_episode_id: null, pending_action: null });
+      }
+
       // ── "/exportar [anonimizado]" — bundle paciente + episodios + diagnósticos + imágenes ──
       const exportMatch = message.trim().match(/^\s*\/?\s*exportar\s*(anonimizado)?\s*$/i);
       if (exportMatch) {
