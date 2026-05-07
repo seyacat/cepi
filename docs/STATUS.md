@@ -32,7 +32,11 @@ Estado del proyecto al cierre de la sesión actual.
 | R9 | convención de routers (>300 LOC ⇒ split) | c87c82f |
 | R10 | CORS_ORIGINS con globs | 9f006d9 |
 
-R5 Phase B (rename de keys en data JSONB existente) deferida — necesita ventana de mantenimiento.
+R5 Phase B (rename de keys en data JSONB existente) — **superada por la migración JSONB→columnas**.
+
+### Migración JSONB → columnas reales (completa)
+
+Cada `entity_<slug>` tiene columnas tipadas derivadas de `entity_definitions.config.fields[]`. La columna `data JSONB` fue dropeada. Writers (`insertBusinessRecord`, `put.ts` rama business) escriben directo a columnas vía `planFieldsForEntity`/`mapDataToColumns`; readers reensamblan el shape `data` con `assembleDataFromRow`. `indexSyncService` indexa columnas reales. CHECK constraints generados para `select` con `options`. La API y el frontend no cambiaron. Implementación en `backend/src/services/columnSyncService.ts`.
 
 ---
 
