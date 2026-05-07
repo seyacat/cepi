@@ -38,6 +38,37 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 /**
+ * /api/bot/session/:id — hydrate a saved session so the frontend can resume
+ * after a page refresh without losing the transcript.
+ */
+app.get('/api/bot/session/:id', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+    const s = await loadSession(mcp, String(req.params.id));
+    if (!s) return res.status(404).json({ ok: false, error: 'Session not found' });
+
+    res.json({
+      ok: true,
+      session_id: s.id,
+      history: s.turns,
+      active_patient_id: s.active_patient_id,
+      active_episode_id: s.active_episode_id,
+      pending_action: s.pending_action,
+    });
+  } catch (err) { next(err); }
+  finally {
+    if (mcp) await mcp.close().catch(() => {});
+  }
+});
+
+/**
  * /api/bot/capabilities — debug helper. Spawns an MCP client with the
  * caller's identity, lists tools, and reports the LLM provider in use.
  */

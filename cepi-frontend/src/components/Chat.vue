@@ -93,7 +93,7 @@
 
 <script setup>
 import { ref, nextTick, onMounted } from 'vue';
-import { chat, loadSessionId, saveSessionId, uploadAttachment } from '../api.js';
+import { chat, loadSessionId, saveSessionId, uploadAttachment, loadBotSession } from '../api.js';
 import ToolResult from './ToolResult.vue';
 
 defineProps({ user: Object });
@@ -186,7 +186,20 @@ function newSession() {
   pending.value = null;
 }
 
-onMounted(() => { /* hydrate from session_id later if needed */ });
+onMounted(async () => {
+  if (!sessionId.value) return;
+  try {
+    const s = await loadBotSession(sessionId.value);
+    if (Array.isArray(s.history)) turns.value = s.history.filter(t => t.role !== 'system');
+    activePatient.value = s.active_patient_id || null;
+    activeEpisode.value = s.active_episode_id || null;
+    pending.value       = s.pending_action     || null;
+  } catch {
+    // stale session id; clear so next message creates a fresh one
+    saveSessionId('');
+    sessionId.value = null;
+  }
+});
 </script>
 
 <style scoped>

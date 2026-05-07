@@ -53,6 +53,10 @@ export async function whoami() {
   return call('/api/auth/me', { method: 'GET' });
 }
 
+export async function loadBotSession(sessionId) {
+  return call(`/api/bot/session/${encodeURIComponent(sessionId)}`, { method: 'GET' });
+}
+
 /**
  * Upload a single file to TodoERP /api/attachments. Optional entity_id
  * links the attachment to a record. Returns the attachment row.
