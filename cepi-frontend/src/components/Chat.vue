@@ -10,13 +10,19 @@
       <div class="ctx">
         <div class="ctx-row">
           <span class="ctx-label">Paciente</span>
-          <code v-if="activePatient">{{ activePatient.slice(0, 8) }}…</code>
+          <span v-if="activePatient">
+            <strong v-if="patientLabel">{{ patientLabel }}</strong>
+            <code class="ctx-uuid">{{ activePatient.slice(0, 8) }}…</code>
+          </span>
           <span v-else class="muted">(ninguno)</span>
           <button v-if="activePatient" class="link" @click="send('salir paciente')">×</button>
         </div>
         <div class="ctx-row">
           <span class="ctx-label">Episodio</span>
-          <code v-if="activeEpisode">{{ activeEpisode.slice(0, 8) }}…</code>
+          <span v-if="activeEpisode">
+            <strong v-if="episodeLabel">{{ episodeLabel }}</strong>
+            <code class="ctx-uuid">{{ activeEpisode.slice(0, 8) }}…</code>
+          </span>
           <span v-else class="muted">(ninguno)</span>
           <button v-if="activeEpisode" class="link" @click="send('salir episodio')">×</button>
         </div>
@@ -93,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue';
+import { ref, nextTick, onMounted, watch } from 'vue';
 import { chat, loadSessionId, saveSessionId, uploadAttachment, loadBotSession } from '../api.js';
 import ToolResult from './ToolResult.vue';
 
@@ -109,6 +115,8 @@ const sessionId = ref(loadSessionId());
 const activePatient = ref(null);
 const activeEpisode = ref(null);
 const pending = ref(null);
+const patientLabel = ref('');
+const episodeLabel = ref('');
 const feedEl = ref(null);
 
 function labelFor(role) {
@@ -178,6 +186,27 @@ async function onFile(ev) {
   }
 }
 
+async function resolveLabel(id, fields) {
+  try {
+    const res = await fetch(`/api/entities/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('cepi.jwt') || ''}` },
+    });
+    if (!res.ok) return '';
+    const body = await res.json();
+    const data = body?.data?.data || {};
+    const parts = fields.map(f => data[f]).filter(Boolean);
+    return parts.length ? parts.join(' ') : (body?.data?.title || '');
+  } catch {
+    return '';
+  }
+}
+watch(activePatient, async (v) => {
+  patientLabel.value = v ? await resolveLabel(v, ['nombre', 'apellidos']) : '';
+});
+watch(activeEpisode, async (v) => {
+  episodeLabel.value = v ? await resolveLabel(v, ['fecha', 'motivo_consulta']) : '';
+});
+
 function newSession() {
   sessionId.value = null;
   saveSessionId('');
@@ -221,6 +250,8 @@ onMounted(async () => {
 .ctx-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .ctx-label { color: #475569; font-weight: 600; min-width: 60px; }
 .ctx code  { font-family: ui-monospace, monospace; color: #1e293b; background: #f1f5f9; padding: 2px 4px; border-radius: 3px; }
+.ctx-uuid  { margin-left: 4px; font-size: 10px; color: #64748b; }
+.ctx strong { color: #1e293b; font-size: 12px; }
 .ctx .link { background: transparent; color: #94a3b8; border: 0; padding: 0; cursor: pointer; }
 
 .main {
