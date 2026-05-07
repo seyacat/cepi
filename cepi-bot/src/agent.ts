@@ -14,6 +14,7 @@
  */
 import { TodoErpMcpClient, ToolCallResult } from './mcpClient.js';
 import { LLMAdapter, ChatTurn, ToolSpec, getLLMAdapter } from './llm.js';
+import { redactPiiInJson } from './redact.js';
 
 const MAX_TOOL_CALLS_PER_TURN = 5;
 
@@ -60,7 +61,13 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutp
     const toolCalls: AgentTurnOutput['toolCalls'] = [];
 
     for (let i = 0; i < MAX_TOOL_CALLS_PER_TURN; i++) {
-      const decision = await llm.step(history, tools);
+      // PAPER §13.3.1: redact PII from tool results BEFORE the LLM sees the
+      // history. The unredacted history is what we return to the caller for
+      // rendering in the UI; only this snapshot is fed to the model.
+      const llmView: ChatTurn[] = history.map(t =>
+        t.role === 'tool' ? { ...t, content: redactPiiInJson(t.content) } : t
+      );
+      const decision = await llm.step(llmView, tools);
 
       if (decision.kind === 'message') {
         const text = decision.text || '';
@@ -80,12 +87,13 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutp
 
       const result = await mcp.call(toolName, args);
       toolCalls.push({ name: toolName, args, result });
+      const rawJson = JSON.stringify(result.ok ? result.data : { error: result.error });
       history = [
         ...history,
         {
           role: 'tool',
           tool_name: toolName,
-          content: JSON.stringify(result.ok ? result.data : { error: result.error }),
+          content: rawJson,
         },
       ];
       // Loop: feed the tool result back to the LLM for the next decision.
