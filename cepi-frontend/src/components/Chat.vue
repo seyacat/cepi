@@ -81,8 +81,8 @@
         <textarea
           v-model="draft"
           rows="2"
-          placeholder="Escribe un mensaje. Ctrl+Enter para enviar. Adjunta una imagen para procesarla como imagen clínica."
-          @keydown.ctrl.enter.prevent="onSubmit"
+          placeholder="Escribe un mensaje. Enter envía, Shift+Enter agrega salto de línea. Adjunta una imagen 📎 o arrástrala al chat."
+          @keydown="onKeyDown"
         />
         <div class="composer-actions">
           <label class="upload-btn" :class="{ disabled: busy || uploading }">
@@ -178,6 +178,12 @@ async function send(message) {
   }
 }
 
+function onKeyDown(ev) {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    onSubmit();
+  }
+}
 function onSubmit() {
   const t = draft.value.trim();
   let payload = t;
