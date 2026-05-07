@@ -288,6 +288,39 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── "resumen" — quick patient summary using entities.list filters ──
+      if (/^\s*\/?\s*resumen\s*$/i.test(message.trim())) {
+        if (!activePatientId) {
+          const ackText = 'Activa un paciente primero (activar paciente <uuid>).';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const [pat, eps, imgs] = await Promise.all([
+          mcp.call('entities.get',  { id: activePatientId }),
+          mcp.call('entities.list', { type: '12000000-0000-0000-0000-000000000000', search: activePatientId, limit: 50 }),
+          mcp.call('entities.list', { type: '16000000-0000-0000-0000-000000000000', search: activePatientId, limit: 50 }),
+        ]);
+        const epList   = Array.isArray(eps.data)  ? eps.data  : [];
+        const imgList  = Array.isArray(imgs.data) ? imgs.data : [];
+        const lastEp   = epList[0];
+        const text =
+          `Resumen de paciente \`${activePatientId.slice(0,8)}…\`:\n` +
+          `  • episodios totales: ${epList.length}\n` +
+          `  • imágenes clínicas: ${imgList.length}\n` +
+          (lastEp ? `  • último episodio: ${lastEp.data?.fecha || '?'} (${lastEp.data?.estado || '?'})\n` : '') +
+          `Para detalle, "ver paciente" o "ver episodio" tras activarlo.`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message },
+          { role: 'tool', tool_name: 'entities.list', content: JSON.stringify({ episodios: epList.length, imagenes: imgList.length, ultimo_episodio: lastEp?.id || null }) },
+          { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
       // ── chatter ─────────────────────────────────────────────────
       const noteMatch = message.trim().match(/^\/?\s*nota\s+(.+)$/i);
       if (noteMatch) {
