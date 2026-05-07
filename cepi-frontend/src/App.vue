@@ -3,6 +3,7 @@
     <header class="topbar">
       <strong>CEPI · Asistente clínico</strong>
       <span v-if="user" class="user">{{ user.email }} ({{ user.role }})
+        <button @click="toggleDark" :title="dark ? 'Modo claro' : 'Modo oscuro'">{{ dark ? '☀' : '☾' }}</button>
         <button @click="onLogout">Salir</button>
       </span>
     </header>
@@ -21,6 +22,17 @@ import { whoami, logout } from './api.js';
 
 const user = ref(null);
 const authed = ref(false);
+const dark = ref(localStorage.getItem('cepi.theme') === 'dark');
+
+function applyTheme() {
+  document.documentElement.dataset.theme = dark.value ? 'dark' : 'light';
+}
+function toggleDark() {
+  dark.value = !dark.value;
+  localStorage.setItem('cepi.theme', dark.value ? 'dark' : 'light');
+  applyTheme();
+}
+applyTheme();
 
 async function refresh() {
   if (!localStorage.getItem('cepi.jwt')) { authed.value = false; return; }

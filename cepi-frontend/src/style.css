@@ -4,6 +4,21 @@
   color: #1e293b;
   background: #f8fafc;
 }
+html[data-theme="dark"] {
+  color: #e2e8f0;
+  background: #0f172a;
+}
+html[data-theme="dark"] .topbar { background: #1e293b !important; border-color: #334155 !important; }
+html[data-theme="dark"] .topbar .user { color: #cbd5e1 !important; }
+html[data-theme="dark"] .topbar .user button { color: #e2e8f0 !important; border-color: #475569 !important; }
+html[data-theme="dark"] .side, html[data-theme="dark"] .main, html[data-theme="dark"] .card {
+  background: #1e293b !important; border-color: #334155 !important;
+}
+html[data-theme="dark"] .turn { border-color: #334155 !important; }
+html[data-theme="dark"] .turn .content { color: #e2e8f0; }
+html[data-theme="dark"] .composer textarea { background: #0f172a; color: #e2e8f0; border-color: #475569; }
+html[data-theme="dark"] .ctx code { background: #334155; color: #e2e8f0; }
+html[data-theme="dark"] .shortcuts button { background: #334155; color: #cbd5e1; border-color: #475569; }
 * { box-sizing: border-box; }
 body { margin: 0; }
 button { cursor: pointer; font: inherit; }
