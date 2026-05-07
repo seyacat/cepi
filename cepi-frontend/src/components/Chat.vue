@@ -45,6 +45,7 @@
         <button @click="send('sugerir diagnostico')" :disabled="busy || !activeEpisode">sugerir dx</button>
         <button @click="send('ver chatter')"     :disabled="busy || !(activePatient || activeEpisode)">ver chatter</button>
         <button @click="send('resumen')"         :disabled="busy || !activePatient">resumen paciente</button>
+        <button @click="send('exportar')"        :disabled="busy || !activePatient">⤓ exportar</button>
       </div>
     </aside>
 
@@ -152,6 +153,17 @@ async function send(message) {
     if (typeof r?.active_patient_id !== 'undefined') activePatient.value = r.active_patient_id;
     if (typeof r?.active_episode_id !== 'undefined') activeEpisode.value = r.active_episode_id;
     if (typeof r?.pending_action     !== 'undefined') pending.value = r.pending_action;
+    if (r?.download && r.download.content) {
+      const blob = new Blob([r.download.content], { type: r.download.content_type || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = r.download.filename || 'export.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
     if (Array.isArray(r?.history)) {
       // Filter out internal system context turns the server prepends.
       turns.value = r.history.filter(t => t.role !== 'system');

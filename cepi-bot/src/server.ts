@@ -400,6 +400,51 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
       }
 
+      // ── "/exportar" — bundle paciente + episodios + diagnósticos + imágenes ──
+      if (/^\s*\/?\s*exportar\s*$/i.test(message.trim())) {
+        if (!activePatientId) {
+          const ackText = 'Activa un paciente primero.';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const [pat, eps, imgs] = await Promise.all([
+          mcp.call('entities.get',  { id: activePatientId }),
+          mcp.call('entities.list', { type: '12000000-0000-0000-0000-000000000000', search: activePatientId, limit: 100 }),
+          mcp.call('entities.list', { type: '16000000-0000-0000-0000-000000000000', search: activePatientId, limit: 100 }),
+        ]);
+        const mcpRef = mcp;
+        const epIds = (Array.isArray(eps.data) ? eps.data : []).map((e: any) => e.id);
+        const dxs   = (await Promise.all(epIds.map(id =>
+          mcpRef.call('entities.list', { type: '13000000-0000-0000-0000-000000000000', search: id, limit: 50 })
+        ))).flatMap(r => (Array.isArray(r.data) ? r.data : []));
+
+        const bundle = {
+          exported_at: new Date().toISOString(),
+          patient: pat.data || null,
+          episodes: eps.data || [],
+          clinical_images: imgs.data || [],
+          diagnoses: dxs,
+        };
+        const ackText = `Bundle del paciente listo (${(eps.data || []).length} episodios, ${(imgs.data || []).length} imágenes, ${dxs.length} diagnósticos).`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message },
+          { role: 'tool', tool_name: 'export.bundle', content: JSON.stringify(bundle) },
+          { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText, history: session.turns,
+          toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          download: {
+            filename: `paciente_${activePatientId.slice(0,8)}.json`,
+            content_type: 'application/json',
+            content: JSON.stringify(bundle, null, 2),
+          },
+        });
+      }
+
       // ── "/signs k=v k=v" — update signos_vitales on the active episode ──
       const signsMatch = message.trim().match(/^\/?\s*signs?\s+(.+)$/i);
       if (signsMatch && activeEpisodeId) {
