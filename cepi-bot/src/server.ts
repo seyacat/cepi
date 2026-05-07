@@ -229,6 +229,49 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── chatter ─────────────────────────────────────────────────
+      const noteMatch = message.trim().match(/^\/?\s*nota\s+(.+)$/i);
+      if (noteMatch) {
+        const target = activeEpisodeId || activePatientId;
+        if (!target) {
+          const ackText = 'Necesito un paciente o episodio activo para anclar la nota.';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const r = await mcp.call('chatter.add_note', { entity_id: target, body: noteMatch[1] });
+        const text = r.ok ? `Nota agregada al ${activeEpisodeId ? 'episodio' : 'paciente'} ${target}.` : `No pude agregar nota: ${r.error}`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'chatter.add_note', args: { entity_id: target }, result: r }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+      if (/^\s*\/?\s*ver\s+chatter\s*$/i.test(message.trim())) {
+        const target = activeEpisodeId || activePatientId;
+        if (!target) {
+          const ackText = 'Necesito paciente o episodio activo.';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const r = await mcp.call('chatter.list', { entity_id: target });
+        const text = r.ok ? `Feed de actividad del ${activeEpisodeId ? 'episodio' : 'paciente'}.` : `Error: ${r.error}`;
+        session.turns = [...session.turns,
+          { role: 'user', content: message },
+          { role: 'tool', tool_name: 'chatter.list', content: JSON.stringify(r.ok ? r.data : { error: r.error }) },
+          { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'chatter.list', args: { entity_id: target }, result: r }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
       // ── reminder actions (no gate; reversible-ish) ──
       const completeRem = message.trim().match(/^\/?\s*completar\s+reminder\s+([0-9a-f-]{36})\s*(.*)$/i);
       if (completeRem) {
