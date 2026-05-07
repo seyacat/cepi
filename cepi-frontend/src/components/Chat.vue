@@ -51,7 +51,7 @@
       <div class="feed" ref="feedEl">
         <div v-for="(t, i) in turns" :key="i" :class="['turn', t.role]">
           <span class="role">{{ labelFor(t.role) }}</span>
-          <ToolResult v-if="t.role === 'tool'" :tool-name="t.tool_name || ''" :raw-content="t.content" />
+          <ToolResult v-if="t.role === 'tool'" :tool-name="t.tool_name || ''" :raw-content="t.content" @action="send" />
           <pre v-else class="content">{{ t.content }}</pre>
         </div>
         <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>

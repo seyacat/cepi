@@ -12,11 +12,19 @@
     <!-- List of records (entities, classifications, ...) -->
     <table v-else-if="isRecordList" class="records">
       <thead>
-        <tr><th v-for="c in columns" :key="c">{{ c }}</th></tr>
+        <tr>
+          <th v-for="c in columns" :key="c">{{ c }}</th>
+          <th class="actions" v-if="quickAction"></th>
+        </tr>
       </thead>
       <tbody>
         <tr v-for="(row, i) in rows" :key="i">
           <td v-for="c in columns" :key="c">{{ format(row[c]) }}</td>
+          <td v-if="quickAction" class="actions">
+            <button class="quick-btn" @click="$emit('action', quickAction.replace('{{id}}', row.id || ''))">
+              {{ quickActionLabel }}
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -40,6 +48,27 @@ import { computed } from 'vue';
 const props = defineProps({
   toolName: { type: String, default: '' },
   rawContent: { type: String, default: '' },
+});
+
+defineEmits(['action']);
+
+// Suggest a per-row quick action depending on the entity type. The label
+// is what the button shows; the templated string is what the parent will
+// receive on click ({{id}} replaced with the row's UUID).
+const ENTITY_DEF_PATIENT = '11000000-0000-0000-0000-000000000000';
+const ENTITY_DEF_EPISODE = '12000000-0000-0000-0000-000000000000';
+
+const quickAction = computed(() => {
+  if (!Array.isArray(parsed.value) || !parsed.value.length) return null;
+  const e = parsed.value[0]?.entity_id;
+  if (e === ENTITY_DEF_PATIENT) return 'activar paciente {{id}}';
+  if (e === ENTITY_DEF_EPISODE) return 'activar episodio {{id}}';
+  return null;
+});
+const quickActionLabel = computed(() => {
+  if (!quickAction.value) return '';
+  if (quickAction.value.includes('paciente')) return 'activar';
+  return 'activar';
 });
 
 const parsed = computed(() => {
@@ -132,6 +161,12 @@ function format(v) {
 .records th, .records td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #fde68a; }
 .records th { color: #92400e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
 .records td { color: #422006; font-family: ui-monospace, monospace; font-size: 12px; }
+.records th.actions, .records td.actions { width: 1%; white-space: nowrap; }
+.quick-btn {
+  background: #14532d; color: #fff; border: none; padding: 2px 8px;
+  border-radius: 3px; font-size: 11px; cursor: pointer;
+}
+.quick-btn:hover { background: #166534; }
 .muted { color: #a16207; font-style: italic; margin: 0; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
 .kv dt { color: #92400e; font-weight: 600; font-size: 12px; }
