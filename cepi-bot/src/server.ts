@@ -167,6 +167,22 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             ? pa.successMessage.replace(/\{\{id\}\}/g, newId)
             : `No pude completar la acción: ${result.error}`;
 
+          // PAPER §13.3 — audit: every successful tool call by the bot
+          // leaves a chatter note on the affected entity (best-effort).
+          if (result.ok) {
+            const targetForNote =
+              (pa.tool === 'entities.create' && newId) ? newId :
+              (pa.tool === 'entities.update' && (pa.args as any)?.id) ? (pa.args as any).id :
+              (pa.tool === 'entities.request_review' && (pa.args as any)?.entity_id) ? (pa.args as any).entity_id :
+              null;
+            if (targetForNote) {
+              await mcp.call('chatter.add_note', {
+                entity_id: targetForNote,
+                body: `🤖 Acción ejecutada por el agente: \`${pa.tool}\` — ${pa.summary}`,
+              }).catch(() => {});
+            }
+          }
+
           // Convenience: auto-activate newly created clinical entities so the
           // user can keep working without typing UUIDs back at the bot.
           if (result.ok && pa.tool === 'entities.create' && newId) {
