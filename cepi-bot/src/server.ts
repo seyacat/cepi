@@ -400,6 +400,74 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
       }
 
+      // ── "sugerir diagnostico" — read classifications + map to CIE-10 ──
+      if (/^\s*\/?\s*sugerir\s+diagn[óo]stico\s*$/i.test(message.trim())) {
+        if (!activeEpisodeId) {
+          const ackText = 'Activa un episodio primero (activar episodio <uuid>).';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const list = await mcp.call('entities.list', {
+          type: '16000000-0000-0000-0000-000000000000',
+          search: activeEpisodeId,
+          limit: 1,
+        });
+        const img = Array.isArray(list.data) && list.data.length ? list.data[0] : null;
+        if (!img) {
+          const ackText = 'No hay imágenes en el episodio. Adjunta una primero.';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const cls = await mcp.call('classifications.list', { entity_id: img.id });
+        const classifList = Array.isArray(cls.data) ? cls.data : [];
+        const multi = classifList.find((c: any) => c.model_id === 'isic-multiclass-v1');
+        const triage = classifList.find((c: any) => c.model_id === 'isic-bin-triage-v1');
+        if (!multi && !triage) {
+          const ackText = 'La imagen aún no tiene clasificaciones. Espera a que el worker ISIC procese.';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        // HAM10000 → CIE-10 (dermatology subset), best-effort mapping.
+        const HAM_TO_ICD: Record<string, string[]> = {
+          akiec: ['L82', 'Queratosis seborreica (queratosis actínica clínica)'],
+          bcc:   ['C44.9', 'Cáncer de piel no melanoma (basocelular)'],
+          bkl:   ['L82', 'Queratosis seborreica'],
+          df:    ['D23.9', 'Dermatofibroma — neoplasia benigna de piel'],
+          mel:   ['C43.9', 'Melanoma maligno de piel'],
+          nv:    ['D22.9', 'Nevus melanocítico'],
+          vasc:  ['L98.9', 'Lesión vascular cutánea'],
+        };
+        const top = Array.isArray(multi?.labels) && multi.labels.length ? multi.labels[0] : null;
+        const triageTop = Array.isArray(triage?.labels) && triage.labels.length ? triage.labels[0] : null;
+        const mapped = top && HAM_TO_ICD[top.label] ? HAM_TO_ICD[top.label] : null;
+        const text = [
+          `**Sugerencia IA** (imagen \`${img.id.slice(0,8)}…\`):`,
+          triageTop ? `  • Triage: ${triageTop.label} (${(triageTop.confidence * 100).toFixed(0)}%)` : null,
+          top       ? `  • Clase top: ${top.label} (${(top.confidence * 100).toFixed(0)}%)` : null,
+          mapped    ? `  • Mapping CIE-10 propuesto: **${mapped[0]}** — ${mapped[1]}` : null,
+          '',
+          'Recordá: la sugerencia es informativa. El diagnóstico es decisión del médico (D-Aux-1).',
+          mapped    ? `Para registrarlo: \`diagnostico ${mapped[0]} ${mapped[1]}\`` : null,
+        ].filter(Boolean).join('\n');
+        session.turns = [...session.turns,
+          { role: 'user', content: message },
+          { role: 'tool', tool_name: 'classifications.list', content: JSON.stringify(classifList) },
+          { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'classifications.list', args: { entity_id: img.id }, result: cls }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
       // ── "casos similares" — vector search over the latest image of the active episode ──
       if (/^\s*\/?\s*(casos\s+similares|similares)\s*$/i.test(message.trim())) {
         if (!activeEpisodeId) {

@@ -41,7 +41,8 @@
         <button @click="send('ver episodio')"   :disabled="busy || !activeEpisode">ver episodio</button>
         <button @click="send('revisiones')"     :disabled="busy">bandeja revisión</button>
         <button @click="send('recordatorios')"  :disabled="busy">recordatorios</button>
-        <button @click="send('casos similares')" :disabled="busy || !activeEpisode">casos similares</button>
+        <button @click="send('casos similares')"   :disabled="busy || !activeEpisode">casos similares</button>
+        <button @click="send('sugerir diagnostico')" :disabled="busy || !activeEpisode">sugerir dx</button>
         <button @click="send('ver chatter')"     :disabled="busy || !(activePatient || activeEpisode)">ver chatter</button>
         <button @click="send('resumen')"         :disabled="busy || !activePatient">resumen paciente</button>
       </div>
