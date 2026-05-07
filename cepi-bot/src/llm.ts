@@ -137,6 +137,9 @@ export class StubLLMAdapter implements LLMAdapter {
     if (has('episodios', 'episodes')) {
       return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '12000000-0000-0000-0000-000000000000', limit: 20 } } };
     }
+    if (has('revisiones', 'bandeja', '/revisiones')) {
+      return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '12000000-0000-0000-0000-000000000000', search: 'en_revisión_solicitada', limit: 50 } } };
+    }
     if (has('diagnosticos', 'diagnósticos', 'diagnoses')) {
       return { kind: 'tool_call', tool: { name: 'entities.list', args: { type: '13000000-0000-0000-0000-000000000000', limit: 20 } } };
     }

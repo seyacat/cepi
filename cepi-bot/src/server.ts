@@ -213,6 +213,41 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Fall through to the normal LLM path below.
       }
 
+      // ── Stage "/escalar a <user-uuid> <razón>" behind gate ──
+      const escalateMatch = message.trim().match(/^\/?\s*escalar\s+a\s+([0-9a-f-]{36})\s+(.+)$/i);
+      if (escalateMatch && activeEpisodeId) {
+        const reviewer = escalateMatch[1];
+        const reason   = escalateMatch[2].trim();
+        session.pending_action = {
+          summary: `Escalar episodio ${activeEpisodeId} a ${reviewer}`,
+          tool: 'entities.request_review',
+          args: {
+            entity_id: activeEpisodeId,
+            reviewers: [reviewer],
+            reason,
+          },
+          successMessage: `Episodio escalado. Recordatorio creado para el reviewer.`,
+          createdAt: new Date().toISOString(),
+        };
+        const ackText =
+          `Voy a escalar el episodio ${activeEpisodeId}.\n` +
+          `  • reviewer: ${reviewer}\n` +
+          `  • motivo: ${reason}\n\n` +
+          `¿Confirmas? (sí / no)`;
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          pending_action: session.pending_action,
+        });
+      }
+
       // ── Stage "cerrar episodio [YYYY-MM-DD] [motivo]" behind gate ──
       const closeMatch = message.trim().match(/^\/?\s*cerrar\s+episodio\b\s*([0-9]{4}-[0-9]{2}-[0-9]{2})?\s*(.*)$/i);
       if (closeMatch && activeEpisodeId) {
