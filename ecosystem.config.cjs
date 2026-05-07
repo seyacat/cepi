@@ -70,5 +70,19 @@ module.exports = {
       env: { NODE_ENV: 'development' },
       max_memory_restart: '500M',
     },
+    {
+      // Fase 6 — Python ISIC inference service (FastAPI, stub mode).
+      // Disabled by default; start with: pm2 start ecosystem.config.cjs --only cepi-isic
+      // Requires the venv set up per cepi-isic/README.md.
+      name: 'cepi-isic',
+      script: '.venv/bin/uvicorn',
+      args: 'app:app --host 0.0.0.0 --port 8000',
+      cwd: './cepi-isic',
+      interpreter: 'none',
+      watch: false,
+      autorestart: true,
+      env: { CEPI_ISIC_PORT: 8000 },
+      max_memory_restart: '1G',
+    },
   ],
 };
