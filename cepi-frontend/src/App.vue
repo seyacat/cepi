@@ -4,7 +4,7 @@
       <div class="header-left">
         <img
           class="logo"
-          src="https://cepi.ec/wp-content/uploads/2022/12/logo-cepi-final-min.png"
+          src="/images/logo-cepi.png"
           alt="CEPI Centro de la Piel"
         />
       </div>
@@ -74,8 +74,9 @@ onMounted(refresh);
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  height: 100dvh;
   width: 100%;
+  overflow: hidden;
 }
 .topbar {
   width: 100%;
@@ -123,6 +124,7 @@ main {
   min-height: 0;
   padding: 12px;
   width: 100%;
+  overflow: hidden;
 }
 
 @media (max-width: 640px) {

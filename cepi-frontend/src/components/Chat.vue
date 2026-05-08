@@ -11,7 +11,31 @@
       <h3>Sesión</h3>
       <p class="muted" v-if="sessionId">id: {{ sessionId.slice(0, 8) }}…</p>
       <p class="muted" v-else>nueva</p>
-      <button @click="newSession" :disabled="busy">Iniciar otra sesión</button>
+      <button @click="newSession" :disabled="busy">+ Nueva sesión</button>
+
+      <h3 style="margin-top: 16px">Mis sesiones</h3>
+      <div class="sessions-filter">
+        <label><input type="checkbox" v-model="showOpen" /> abiertas</label>
+        <label><input type="checkbox" v-model="showClosed" /> cerradas</label>
+      </div>
+      <div class="sessions-list" v-if="filteredSessions.length">
+        <button
+          v-for="s in filteredSessions"
+          :key="s.id"
+          class="session-item"
+          :class="{ active: s.id === sessionId }"
+          :disabled="busy"
+          :title="s.title"
+          @click="openSession(s.id)"
+        >
+          <div class="session-preview">{{ s.preview || '(sin mensajes)' }}</div>
+          <div class="session-meta">
+            <span class="session-date">{{ formatSessionDate(s.updated_at || s.created_at) }}</span>
+            <span class="session-state" :class="s.estado">{{ s.estado }}</span>
+          </div>
+        </button>
+      </div>
+      <p class="muted" v-else>{{ sessions.length ? 'no hay sesiones que coincidan' : 'no hay sesiones previas' }}</p>
 
       <h3 style="margin-top: 16px">Contexto</h3>
       <div class="ctx">
@@ -68,7 +92,7 @@
           <div class="welcome">
             <img
               class="welcome-logo"
-              src="https://cepi.ec/wp-content/uploads/2022/12/logo-cepi-final-min.png"
+              src="/images/logo-cepi.png"
               alt="CEPI"
             />
             <p>
@@ -76,6 +100,13 @@
               <strong>CEPI Centro de la Piel</strong>.<br />
               ¿En qué puedo ayudarte hoy?
             </p>
+            <div v-if="!turns.length" class="initial-mode">
+              <p class="initial-mode-q">¿Es una consulta general o atención a un paciente?</p>
+              <div class="initial-mode-actions">
+                <button @click="send('general')" :disabled="busy">Consulta general</button>
+                <button @click="send('paciente')" :disabled="busy">Atención a paciente</button>
+              </div>
+            </div>
           </div>
 
           <div class="messages">
@@ -85,6 +116,15 @@
               <pre v-else class="content">{{ t.content }}</pre>
             </div>
             <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>
+          </div>
+
+          <div v-if="quickReplies.length && !busy" class="quick-replies">
+            <button
+              v-for="(q, i) in quickReplies"
+              :key="i"
+              class="quick-reply"
+              @click="onQuickReply(q)"
+            >{{ q.label }}</button>
           </div>
 
           <div v-if="pending" class="pending-card">
@@ -103,7 +143,7 @@
             <textarea
               v-model="draft"
               rows="2"
-              placeholder="Escribe un mensaje. Enter envía, Shift+Enter agrega salto de línea. Adjunta una imagen 📎 o arrástrala al chat."
+              placeholder="Escribe un mensaje…"
               @keydown="onKeyDown"
             />
             <div class="composer-actions">
@@ -133,8 +173,8 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, watch } from 'vue';
-import { chat, loadSessionId, saveSessionId, uploadAttachment, loadBotSession } from '../api.js';
+import { ref, computed, nextTick, onMounted, watch } from 'vue';
+import { chat, saveSessionId, uploadAttachment, listBotSessions, loadBotSession } from '../api.js';
 import ToolResult from './ToolResult.vue';
 
 defineProps({ user: Object });
@@ -145,10 +185,23 @@ const busy  = ref(false);
 const uploading = ref(false);
 const pendingAttachment = ref(null);
 const error = ref('');
-const sessionId = ref(loadSessionId());
+const sessionId = ref(null);
+const sessions = ref([]);
+const showOpen = ref(true);
+const showClosed = ref(false);
+const filteredSessions = computed(() => sessions.value.filter(s => {
+  const isClosed = s.estado === 'cerrada' || s.estado === 'abandonada';
+  return isClosed ? showClosed.value : showOpen.value;
+}));
 const activePatient = ref(null);
 const activeEpisode = ref(null);
 const pending = ref(null);
+const quickReplies = ref([]);
+
+function onQuickReply(q) {
+  quickReplies.value = [];
+  send(q.send);
+}
 const patientLabel = ref('');
 const episodeLabel = ref('');
 const dragOver = ref(false);
@@ -203,6 +256,7 @@ async function send(message) {
     if (typeof r?.active_patient_id !== 'undefined') activePatient.value = r.active_patient_id;
     if (typeof r?.active_episode_id !== 'undefined') activeEpisode.value = r.active_episode_id;
     if (typeof r?.pending_action     !== 'undefined') pending.value = r.pending_action;
+    quickReplies.value = Array.isArray(r?.quick_replies) ? r.quick_replies : [];
     if (r?.download && r.download.content) {
       const blob = new Blob([r.download.content], { type: r.download.content_type || 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
@@ -219,6 +273,17 @@ async function send(message) {
       turns.value = r.history.filter(t => t.role !== 'system');
     } else {
       turns.value = [...turns.value, { role: 'assistant', content: r?.text || '(sin respuesta)' }];
+    }
+    // Bot signaled it closed the session — drop our id so the next message
+    // creates a fresh one, and refresh the sidebar so the closed entry shows.
+    if (r?.session_closed) {
+      sessionId.value = null;
+      localStorage.removeItem('cepi.session_id');
+      activePatient.value = null;
+      activeEpisode.value = null;
+      pending.value = null;
+      quickReplies.value = [];
+      refreshSessions();
     }
   } catch (e) {
     error.value = e.message || String(e);
@@ -295,27 +360,63 @@ watch(activeEpisode, async (v) => {
 
 function newSession() {
   sessionId.value = null;
-  saveSessionId('');
+  localStorage.removeItem('cepi.session_id');
   turns.value = [];
   activePatient.value = null;
   activeEpisode.value = null;
   pending.value = null;
+  quickReplies.value = [];
 }
 
-onMounted(async () => {
-  if (!sessionId.value) return;
+async function refreshSessions() {
   try {
-    const s = await loadBotSession(sessionId.value);
-    if (Array.isArray(s.history)) turns.value = s.history.filter(t => t.role !== 'system');
+    const r = await listBotSessions();
+    sessions.value = Array.isArray(r?.sessions) ? r.sessions : [];
+  } catch {
+    sessions.value = [];
+  }
+}
+
+async function openSession(id) {
+  if (busy.value || id === sessionId.value) return;
+  busy.value = true;
+  try {
+    const s = await loadBotSession(id);
+    sessionId.value = s.session_id || id;
+    saveSessionId(sessionId.value);
+    turns.value = Array.isArray(s.history) ? s.history.filter(t => t.role !== 'system') : [];
     activePatient.value = s.active_patient_id || null;
     activeEpisode.value = s.active_episode_id || null;
     pending.value       = s.pending_action     || null;
-  } catch {
-    // stale session id; clear so next message creates a fresh one
-    saveSessionId('');
-    sessionId.value = null;
+    quickReplies.value  = [];
+  } catch (e) {
+    error.value = e.message || String(e);
+  } finally {
+    busy.value = false;
   }
+}
+
+function formatSessionDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+}
+
+onMounted(() => {
+  // Always boot with a fresh, empty session view. The sidebar lists the
+  // user's previous sessions so they can resume one explicitly.
+  localStorage.removeItem('cepi.session_id');
+  refreshSessions();
 });
+
+// Refresh the sidebar list whenever the active session id changes (new
+// session created on first message, or user switches sessions).
+watch(sessionId, () => { refreshSessions(); });
 </script>
 
 <style scoped>
@@ -323,7 +424,8 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 16px;
-  height: calc(100dvh - var(--header-h) - 24px);
+  height: 100%;
+  min-height: 0;
   position: relative;
 }
 .side-toggle {
@@ -375,11 +477,68 @@ onMounted(async () => {
   background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px;
   font-size: 14px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  min-height: 0; overflow-y: auto;
 }
 .side h3 {
   font-size: 12px; text-transform: uppercase; color: var(--accent);
   margin: 0 0 8px; letter-spacing: .04em; font-weight: 700;
 }
+.sessions-filter {
+  display: flex; gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px; color: var(--text-muted);
+}
+.sessions-filter label {
+  display: inline-flex; align-items: center; gap: 4px;
+  cursor: pointer;
+}
+.sessions-filter input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.sessions-list {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 8px;
+}
+.session-item {
+  background: var(--bot-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.session-item:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+.session-item.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.session-item.active .session-meta { color: rgba(255,255,255,0.85); }
+.session-item:disabled { opacity: .55; cursor: not-allowed; }
+.session-preview {
+  font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.session-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; color: var(--text-muted);
+}
+.session-state {
+  text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
+  padding: 1px 5px; border-radius: 8px;
+  background: rgba(0,0,0,0.06);
+}
+.session-state.cerrada   { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+.session-state.abandonada { background: rgba(148, 163, 184, 0.18); color: #64748b; }
+.session-item.active .session-state { background: rgba(255,255,255,0.22); color: #fff; }
+
 .shortcuts { display: flex; flex-direction: column; gap: 6px; }
 .shortcuts button {
   border: 1.5px solid var(--border); background: #f8fafc; color: var(--text);
@@ -445,6 +604,24 @@ onMounted(async () => {
   background: var(--accent-band); border-radius: 10px; padding: 0.6rem 1.2rem;
 }
 .welcome p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.7; }
+.initial-mode {
+  display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.initial-mode-q {
+  color: var(--text); font-weight: 600; font-size: 1rem; margin: 0;
+}
+.initial-mode-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
+.initial-mode-actions button {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 22px; padding: 0.55rem 1.2rem;
+  font-weight: 700; font-size: 0.9rem; cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.initial-mode-actions button:hover:not(:disabled) {
+  background: var(--accent-hover); transform: scale(1.03);
+}
+.initial-mode-actions button:disabled { opacity: .55; cursor: not-allowed; }
 
 .turn {
   display: flex; flex-direction: column; gap: 4px; max-width: 82%;
@@ -553,4 +730,16 @@ html[data-theme="dark"] .composer textarea {
 .pending-actions .confirm { background: #16a34a; color: #fff; }
 .pending-actions .cancel  { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
 .pending-actions button[disabled] { opacity: .5; cursor: not-allowed; }
+
+.quick-replies {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 4px 0;
+}
+.quick-reply {
+  border: 1.5px solid var(--accent); background: #fff; color: var(--accent);
+  padding: 0.4rem 0.85rem; border-radius: 18px;
+  font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.quick-reply:hover { background: var(--accent); color: #fff; }
 </style>

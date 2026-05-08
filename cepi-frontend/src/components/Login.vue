@@ -40,20 +40,26 @@ async function submit() {
 <style scoped>
 .card {
   max-width: 360px; margin: 60px auto; padding: 24px;
-  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+  background: var(--bot-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   display: flex; flex-direction: column; gap: 12px;
+  color: var(--text);
 }
-.card h2 { margin: 0 0 8px; }
-label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: #475569; }
+.card h2 { margin: 0 0 8px; color: var(--accent); }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--text-muted); }
 input {
-  padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 4px;
-  font-size: 14px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px;
+  font-size: 14px; background: var(--bg); color: var(--text);
 }
+input:focus { outline: none; border-color: var(--accent); }
 button {
-  padding: 10px 14px; background: #6366f1; color: #fff; border: none;
-  border-radius: 4px; font-weight: 600;
+  padding: 10px 14px; background: var(--accent); color: #fff; border: none;
+  border-radius: 4px; font-weight: 600; cursor: pointer;
+  transition: background .15s ease;
 }
+button:hover:not([disabled]) { background: var(--accent-hover, #4da8cf); }
 button[disabled] { opacity: .6; cursor: not-allowed; }
 .error { color: #dc2626; font-size: 13px; margin: 4px 0 0; }
-.hint  { color: #94a3b8; font-size: 12px; margin: 4px 0 0; }
+.hint  { color: var(--text-muted); font-size: 12px; margin: 4px 0 0; }
 </style>

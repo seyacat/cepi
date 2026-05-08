@@ -23,7 +23,8 @@ import cors from 'cors';
 import { runAgentTurn } from './agent.js';
 import { ChatTurn } from './llm.js';
 import { TodoErpMcpClient } from './mcpClient.js';
-import { createSession, loadSession, saveSession } from './sessionStore.js';
+import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID } from './sessionStore.js';
+import { handleV1Flow } from './flowV1.js';
 
 dotenv.config();
 
@@ -35,6 +36,61 @@ app.use(express.json({ limit: '5mb' }));
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ ok: true, service: 'cepi-bot', port: PORT, ts: new Date().toISOString() });
+});
+
+/**
+ * /api/bot/sessions — list the caller's saved sessions, most recent first.
+ * Used by the frontend sidebar to switch between past conversations.
+ */
+app.get('/api/bot/sessions', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    let userId: string | null = null;
+    if (jwt) {
+      try {
+        const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString('utf8'));
+        userId = payload?.sub || null;
+      } catch {}
+    }
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+    const r = await mcp.call('entities.list', { type: BOT_SESSION_ENTITY_ID, limit: 200 });
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error || 'list failed' });
+
+    const rows: any[] = Array.isArray(r.data?.data) ? r.data.data
+                       : Array.isArray(r.data) ? r.data : [];
+    const items = rows
+      .filter(row => !userId || (row?.data?.user_id ?? '') === userId)
+      .map(row => {
+        const turnsRaw = row?.data?.turns;
+        let preview = '';
+        try {
+          const turns = typeof turnsRaw === 'string' ? JSON.parse(turnsRaw) : (turnsRaw || []);
+          const lastUserTurn = [...turns].reverse().find((t: any) => t?.role === 'user');
+          preview = (lastUserTurn?.content || '').slice(0, 80);
+        } catch {}
+        return {
+          id:         row.id,
+          title:      row.title || '',
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          estado:     row?.data?.estado || 'abierta',
+          preview,
+        };
+      })
+      .sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')));
+
+    res.json({ ok: true, sessions: items });
+  } catch (err) { next(err); }
+  finally {
+    if (mcp) await mcp.close().catch(() => {});
+  }
 });
 
 /**
@@ -211,6 +267,28 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         });
       }
 
+      // ── Close-session command: marks estado=cerrada and signals frontend
+      //    so it can drop its sessionId and start fresh on next message.
+      const closeSession = trimmed.match(/^\/?\s*(cerrar|cierra|finalizar?|terminar?|salir(?!\s+(paciente|episodio)))\s*(la\s+|de\s+)?(sesi[oó]n|chat)\s*$/i);
+      if (closeSession) {
+        session.estado = 'cerrada';
+        session.pending_action = null;
+        const ackText = 'Sesión cerrada. Iniciá una nueva cuando quieras.';
+        session.turns = [
+          ...session.turns,
+          { role: 'user',      content: message },
+          { role: 'assistant', content: ackText },
+        ];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText,
+          history: session.turns, toolCalls: [],
+          active_patient_id: session.active_patient_id,
+          active_episode_id: session.active_episode_id,
+          session_closed: true,
+        });
+      }
+
       activePatientId = session.active_patient_id;
       activeEpisodeId = session.active_episode_id;
 
@@ -286,6 +364,25 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Other input while a pending_action exists: keep the pending; the
         // LLM still sees state context, but user might be reconsidering.
         // Fall through to the normal LLM path below.
+      }
+
+      // ── V1 conversational flow gate (docs/CHATBOT_FLOW.md) ─────────────
+      // Handles mode handshake, patient search/select and new-patient form.
+      // Returns null when the turn should fall through to legacy handlers.
+      {
+        const v1 = await handleV1Flow({ session, message, mcp });
+        if (v1) {
+          // session was already mutated + saved by handleV1Flow.
+          return res.json({
+            ok: true, session_id: sessionId, text: v1.text,
+            history: session.turns,
+            toolCalls: [],
+            active_patient_id: session.active_patient_id,
+            active_episode_id: session.active_episode_id,
+            pending_action: session.pending_action,
+            quick_replies: v1.quick_replies || [],
+          });
+        }
       }
 
       // ── "resumen" — quick patient summary using entities.list filters ──

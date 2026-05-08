@@ -13,7 +13,7 @@
 import { TodoErpMcpClient, ToolCallResult } from './mcpClient.js';
 import { ChatTurn } from './llm.js';
 
-const BOT_SESSION_ENTITY_ID = '17000000-0000-0000-0000-000000000000';
+export const BOT_SESSION_ENTITY_ID = '17000000-0000-0000-0000-000000000000';
 
 /** A pending action awaits user confirmation before it persists. */
 export interface PendingAction {

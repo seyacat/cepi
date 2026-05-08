@@ -87,11 +87,10 @@
   /* ---------- Header ---------- */
   .header { display: grid; grid-template-columns: 70px 1fr 250px; gap: 10px; align-items: center; margin-bottom: 4px; }
   .logo {
-    width: 56px; height: 56px; border: 2px solid #3a7a85; border-radius: 50%;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    color: #3a7a85; font-weight: 700; letter-spacing: 2px; font-size: 9pt;
+    width: 70px; height: 56px;
+    display: flex; align-items: center; justify-content: center;
   }
-  .logo small { font-size: 4.5pt; letter-spacing: 0.3px; font-weight: 400; margin-top: 1px; }
+  .logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .title-bar {
     background: #5b9097; color: #fff; padding: 6px 10px;
     font-size: 14pt; font-style: italic; text-align: center;
@@ -265,7 +264,7 @@
 
   <!-- ============================== HEADER ============================== -->
   <div class="header">
-    <div class="logo">CEPI<small>CENTRO DE LA PIEL</small></div>
+    <div class="logo"><img src="logo_black.png" alt="CEPI Centro de la Piel"></div>
     <div class="title-bar">Historia Cl<span style="font-style:normal">í</span>nica Dermatol&oacute;gica - APS</div>
     <div class="header-fields">
       <span class="lbl">Ficha #:</span> <input type="text" name="ficha_num">

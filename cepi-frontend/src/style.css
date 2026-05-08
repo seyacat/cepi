@@ -39,6 +39,26 @@ html[data-theme="dark"] .ctx code { background: #334155; color: #e2e8f0; }
 html[data-theme="dark"] .shortcuts button { background: #334155; color: #cbd5e1; border-color: #475569; }
 
 * { box-sizing: border-box; }
-body { margin: 0; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
 button { cursor: pointer; font: inherit; }
 input, textarea { font: inherit; }
+
+/* Themed scrollbars — Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+/* Themed scrollbars — WebKit/Blink */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner { background: transparent; }

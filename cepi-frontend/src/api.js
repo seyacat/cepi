@@ -58,6 +58,10 @@ export async function loadBotSession(sessionId) {
   return call(`/api/bot/session/${encodeURIComponent(sessionId)}`, { method: 'GET' });
 }
 
+export async function listBotSessions() {
+  return call('/api/bot/sessions', { method: 'GET' });
+}
+
 /**
  * Upload a single file to TodoERP /api/attachments. Optional entity_id
  * links the attachment to a record. Returns the attachment row.
