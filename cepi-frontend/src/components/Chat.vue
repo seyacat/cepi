@@ -105,6 +105,7 @@
               <div class="initial-mode-actions">
                 <button @click="send('general')" :disabled="busy">Consulta general</button>
                 <button @click="send('paciente')" :disabled="busy">Atención a paciente</button>
+                <button @click="send('informacion paciente')" :disabled="busy">Información paciente</button>
               </div>
             </div>
           </div>
@@ -126,6 +127,13 @@
               @click="onQuickReply(q)"
             >{{ q.label }}</button>
           </div>
+
+          <BotForm
+            v-if="botForm && !busy"
+            :form="botForm"
+            :busy="busy"
+            @send="send"
+          />
 
           <div v-if="pending" class="pending-card">
             <div class="pending-head">
@@ -176,6 +184,7 @@
 import { ref, computed, nextTick, onMounted, watch } from 'vue';
 import { chat, saveSessionId, uploadAttachment, listBotSessions, loadBotSession } from '../api.js';
 import ToolResult from './ToolResult.vue';
+import BotForm from './BotForm.vue';
 
 defineProps({ user: Object });
 
@@ -197,6 +206,7 @@ const activePatient = ref(null);
 const activeEpisode = ref(null);
 const pending = ref(null);
 const quickReplies = ref([]);
+const botForm = ref(null);
 
 function onQuickReply(q) {
   quickReplies.value = [];
@@ -257,6 +267,7 @@ async function send(message) {
     if (typeof r?.active_episode_id !== 'undefined') activeEpisode.value = r.active_episode_id;
     if (typeof r?.pending_action     !== 'undefined') pending.value = r.pending_action;
     quickReplies.value = Array.isArray(r?.quick_replies) ? r.quick_replies : [];
+    botForm.value = r?.form || null;
     if (r?.download && r.download.content) {
       const blob = new Blob([r.download.content], { type: r.download.content_type || 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
@@ -283,6 +294,7 @@ async function send(message) {
       activeEpisode.value = null;
       pending.value = null;
       quickReplies.value = [];
+      botForm.value = null;
       refreshSessions();
     }
   } catch (e) {
@@ -366,6 +378,7 @@ function newSession() {
   activeEpisode.value = null;
   pending.value = null;
   quickReplies.value = [];
+  botForm.value = null;
 }
 
 async function refreshSessions() {
@@ -389,6 +402,7 @@ async function openSession(id) {
     activeEpisode.value = s.active_episode_id || null;
     pending.value       = s.pending_action     || null;
     quickReplies.value  = [];
+    botForm.value       = null;
   } catch (e) {
     error.value = e.message || String(e);
   } finally {

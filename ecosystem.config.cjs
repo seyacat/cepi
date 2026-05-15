@@ -56,6 +56,7 @@ module.exports = {
         NODE_ENV: 'development',
         PORT: 3002,
         TODOERP_API_URL: 'http://localhost:3001',
+        CEPI_LLM_PROVIDER: 'claude',
       },
       max_memory_restart: '500M',
     },

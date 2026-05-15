@@ -211,5 +211,9 @@ export async function getLLMAdapter(): Promise<LLMAdapter> {
     const mod = await import('./llmDeepSeek.js');
     return new mod.DeepSeekLLMAdapter();
   }
+  if (provider === 'claude' || provider === 'claude-cli') {
+    const mod = await import('./llmClaudeCli.js');
+    return new mod.ClaudeCliLLMAdapter();
+  }
   return new StubLLMAdapter();
 }

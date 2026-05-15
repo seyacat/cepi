@@ -203,8 +203,79 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       const clrEpisode = trimmed.match(/^\/?\s*(salir|cerrar|olvidar)\s+episodio\s*$/i);
 
       if (setPatient) {
-        session.active_patient_id = setPatient[1];
-        const ackText = `Paciente activo: ${setPatient[1]}.`;
+        const pid = setPatient[1];
+        session.active_patient_id = pid;
+
+        // Pull the patient record so the bot has the data in context and can
+        // greet with basic info (name, age, sex, weight…) instead of a bare id.
+        let patientData: Record<string, any> = {};
+        let patientTitle = pid;
+        try {
+          const pr = await mcp.call('entities.get', { id: pid });
+          const rec = (pr as any)?.data || {};
+          patientData = rec.data || {};
+          patientTitle = rec.title || pid;
+        } catch { /* fall back to the id */ }
+
+        const nombre = [patientData.nombre, patientData.apellidos]
+          .filter(Boolean).join(' ') || patientTitle;
+        const edad = (() => {
+          const dob = patientData.fecha_nac;
+          if (!dob) return null;
+          const d = new Date(dob);
+          if (isNaN(d.getTime())) return null;
+          const now = new Date();
+          let a = now.getFullYear() - d.getFullYear();
+          const m = now.getMonth() - d.getMonth();
+          if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+          return a >= 0 && a < 150 ? a : null;
+        })();
+        const info = [
+          edad != null ? `${edad} años` : null,
+          patientData.sexo ? `sexo ${patientData.sexo}` : null,
+          patientData.peso ? `${patientData.peso} kg` : null,
+          patientData.cedula ? `cédula ${patientData.cedula}` : null,
+          patientData.tipo_sangre ? `grupo ${patientData.tipo_sangre}` : null,
+        ].filter(Boolean);
+
+        // Most recent prior episode, summarised in one line for context.
+        let prevLine = '';
+        try {
+          const er = await mcp.call('entities.list', {
+            type: '12000000-0000-0000-0000-000000000000',
+            search: pid,
+            limit: 50,
+          });
+          const eps = Array.isArray((er as any)?.data) ? (er as any).data : [];
+          if (eps.length) {
+            eps.sort((a: any, b: any) =>
+              String(b?.data?.fecha || '').localeCompare(String(a?.data?.fecha || '')));
+            const last = eps[0];
+            const motivo = last?.data?.motivo_consulta;
+            if (motivo) {
+              prevLine = `Consulta anterior (${last?.data?.fecha || 's/f'}): ${motivo}.`;
+            }
+          }
+        } catch { /* no prior episode context */ }
+
+        // "patient_info" is a non-presential lookup: show the data and stop.
+        // "patient" (atención) assumes the patient is being attended, so the
+        // bot keeps going and opens the episode intake flow.
+        const infoOnly = (session.extracted_slots as any)?.mode === 'patient_info';
+        session.extracted_slots = {
+          ...(session.extracted_slots || {}),
+          mode: infoOnly ? 'patient_info' : 'patient',
+          patient_context: { id: pid, ...patientData },
+          ...(infoOnly ? {} : { form_state: { kind: 'episode' } }),
+        };
+
+        const ackText =
+          `Paciente activo: ${nombre}` +
+          (info.length ? `\n  ${info.join(' · ')}` : '') +
+          (prevLine ? `\n  ${prevLine}` : '') +
+          (infoOnly
+            ? `\n\nModo información (no presencial). ¿Qué querés saber del paciente?`
+            : `\n\n¿Qué le pasa al paciente? Contame el motivo de consulta.`);
         session.turns = [
           ...session.turns,
           { role: 'user',      content: message },
@@ -381,6 +452,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             active_episode_id: session.active_episode_id,
             pending_action: session.pending_action,
             quick_replies: v1.quick_replies || [],
+            form: v1.form || null,
           });
         }
       }
