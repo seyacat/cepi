@@ -189,3 +189,55 @@ exportar [anonimizado]   → descarga JSON
 3. **Pseudoanonimización pull**: que el agente use un JWT/api-key sin `pii:read:*` y reciba data ya redactada al jalar tools. Listo para la integración con DeepSeek.
 4. **Dashboards supermédico**: aprovechar `report_configs` + frontend admin. Es DATA, no code.
 5. **R5 Phase B**: rename de keys en `data` JSONB en una ventana de mantenimiento.
+
+---
+
+## Sesión 2026-05-15 — Ficha clínica, formularios del bot, ICD-11
+
+### Formularios del bot (`BotForm`)
+- Componente `cepi-frontend/src/components/BotForm.vue`: tipos de campo
+  `text`, `textarea`, `checkbox`, `radio`, `heading`, `entity_search`.
+- Envío estructurado (`submit_mode: 'structured'`) → `{ form_id, data }`.
+- `EntitySearchField.vue`: autocompletado con lazy-load contra `/api/entities`
+  (usa `filter[<col>]` para columnas UUID; `q` no las matchea).
+- Búsqueda de paciente y alta de paciente como formularios en el chat.
+- **El formulario activo se persiste en `extracted_slots.active_form`** de la
+  sesión → sobrevive recarga y cambio de conversación, hasta que se llena.
+
+### Ficha clínica (consulta)
+- Modos: "Atención a paciente" abre episodio + ficha; "Información paciente"
+  enlaza al último episodio (no presencial).
+- Ficha §3-§7 como formularios por sección; cada submit hace `entities.update`
+  del episodio.
+- Visor de ficha (`docs/ficha.html`, servido en `cepi-frontend/public/`):
+  modal con paginador entre episodios, Guardar (→ bot → paciente+episodio),
+  etiquetas en rojo si el valor cambió vs la ficha anterior, regiones del
+  cuerpo como toggles (multi-opción `regiones_afectadas`).
+- Semáforo diagnóstico A/B/C en la barra superior del chat (`diagnostico_letra`).
+
+### LLM
+- Adapter `cepi-bot/src/llmClaudeCli.ts`: usa el CLI `claude` como LLM.
+  Activar con `CEPI_LLM_PROVIDER=claude` (seteado en `ecosystem.config.cjs`).
+
+### Integración ICD-11 (OMS)
+- `cepi-bot/src/icdWho.ts`: cliente WHO ICD-11 (OAuth2 client-credentials,
+  token cacheado) + búsqueda MMS.
+- Endpoint `GET /api/bot/icd/search?q=` (proxy; el `client_secret` queda
+  server-side).
+- Credenciales en `cepi-bot/.env` (gitignored): `WHO_ICD_CLIENT_ID`,
+  `WHO_ICD_CLIENT_SECRET` — registrarse en https://icd.who.int/icdapi.
+- Campo §5 Diagnóstico de la ficha: autocompletado contra ICD-11.
+
+### Seeders (TodoERP/database/medical-seed)
+- `004_medical_fake_data.sql`: fix de claves `patient_id`/`episode_id` planas
+  + `medico_id` (faltaban → rompía el seed).
+- `006_icd10_dermatology.sql`: reescrito a forma columnar (la tabla tipada no
+  tiene columna `data`).
+- `001` (definición episodio) + `005` (form): campos de la ficha §3-§7,
+  `diagnostico`, `diagnostico_letra`, `regiones_afectadas`.
+
+### Pendiente / notas
+- `reset-cepi.sh` no limpia registros `entity_*` reales (no-SEED) creados desde
+  la app — se acumulan; conviene un TRUNCATE explícito de tablas tipadas.
+- Bot proactivo con formularios dinámicos generados por LLM: planificado,
+  no implementado.

@@ -44,9 +44,11 @@ export function saveSessionId(id) {
   if (id) localStorage.setItem('cepi.session_id', id);
 }
 
-export async function chat(message, sessionId) {
+export async function chat(message, sessionId, extra = {}) {
   const body = { message };
   if (sessionId) body.session_id = sessionId;
+  // Structured form submission ({ form_id, data }) — used by ficha sections.
+  if (extra.formSubmission) body.form_submission = extra.formSubmission;
   return call('/api/bot/chat', { method: 'POST', body: JSON.stringify(body) });
 }
 

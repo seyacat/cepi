@@ -23,10 +23,44 @@ import cors from 'cors';
 import { runAgentTurn } from './agent.js';
 import { ChatTurn } from './llm.js';
 import { TodoErpMcpClient } from './mcpClient.js';
-import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID } from './sessionStore.js';
-import { handleV1Flow } from './flowV1.js';
+import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID, BotSession } from './sessionStore.js';
+import {
+  handleV1Flow, fichaSectionForm, FICHA_FIRST_SECTION, BotForm,
+} from './flowV1.js';
+import { icdSearch } from './icdWho.js';
 
 dotenv.config();
+
+const PATIENT_ENTITY_ID = '11000000-0000-0000-0000-000000000000';
+const EPISODE_ENTITY_ID = '12000000-0000-0000-0000-000000000000';
+
+/**
+ * Open a new episode for the active patient and return its id. The episode
+ * is the container the ficha clínica sections then fill in via entities.update.
+ */
+async function openEpisodeFicha(
+  mcp: TodoErpMcpClient, _session: BotSession, patientId: string,
+): Promise<string | null> {
+  const today = new Date().toISOString().slice(0, 10);
+  let medicoId: string | null = null;
+  try {
+    const me = await mcp.call('auth.whoami', {});
+    medicoId = ((me as any)?.data?.user?.id as string) || null;
+  } catch { /* leave null */ }
+  const res = await mcp.call('entities.create', {
+    record_type: 'business',
+    entity_id: EPISODE_ENTITY_ID,
+    title: `episode_${today}`,
+    data: {
+      [`${PATIENT_ENTITY_ID}:patient_id`]: patientId,
+      medico_id: medicoId,
+      fecha: today,
+      tipo: 'presencial',
+      estado: 'en_curso',
+    },
+  });
+  return (res as any)?.ok ? (((res as any).data?.id as string) || null) : null;
+}
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3002', 10);
@@ -75,6 +109,15 @@ app.get('/api/bot/sessions', async (req: Request, res: Response, next: NextFunct
           const lastUserTurn = [...turns].reverse().find((t: any) => t?.role === 'user');
           preview = (lastUserTurn?.content || '').slice(0, 80);
         } catch {}
+        // Patient name from the persisted context, so the session pill can
+        // show who the chat is about.
+        let patientName = '';
+        try {
+          const slotsRaw = row?.data?.extracted_slots;
+          const slots = typeof slotsRaw === 'string' ? JSON.parse(slotsRaw) : (slotsRaw || {});
+          const pc = slots?.patient_context;
+          if (pc) patientName = [pc.nombre, pc.apellidos].filter(Boolean).join(' ');
+        } catch {}
         return {
           id:         row.id,
           title:      row.title || '',
@@ -82,6 +125,7 @@ app.get('/api/bot/sessions', async (req: Request, res: Response, next: NextFunct
           updated_at: row.updated_at,
           estado:     row?.data?.estado || 'abierta',
           preview,
+          patient_name: patientName,
         };
       })
       .sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')));
@@ -117,10 +161,24 @@ app.get('/api/bot/session/:id', async (req: Request, res: Response, next: NextFu
       active_patient_id: s.active_patient_id,
       active_episode_id: s.active_episode_id,
       pending_action: s.pending_action,
+      form: (s.extracted_slots as any)?.active_form ?? null,
     });
   } catch (err) { next(err); }
   finally {
     if (mcp) await mcp.close().catch(() => {});
+  }
+});
+
+/**
+ * /api/bot/icd/search?q=… — proxy to the WHO ICD-11 MMS search.
+ * The OAuth2 token + client_secret stay server-side.
+ */
+app.get('/api/bot/icd/search', async (req: Request, res: Response) => {
+  try {
+    const results = await icdSearch(String(req.query.q || ''));
+    res.json({ ok: true, results });
+  } catch (e: any) {
+    res.status(502).json({ ok: false, error: e?.message || 'ICD search failed' });
   }
 });
 
@@ -160,7 +218,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       jwt: jwtFromBody,
       apiKey: keyFromBody,
       session_id: incomingSessionId,
-      message,
+      message = '',
+      form_submission: formSubmission,
     } = req.body || {};
 
     const auth = req.header('authorization') || '';
@@ -185,7 +244,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
     let activePatientId: string | null = null;
     let activeEpisodeId: string | null = null;
 
-    if (typeof message === 'string' && message.length > 0) {
+    if ((typeof message === 'string' && message.length > 0) || formSubmission) {
       // Session-managed path.
       let session = incomingSessionId ? await loadSession(mcp, incomingSessionId) : null;
       if (!session) {
@@ -240,10 +299,11 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
 
         // Most recent prior episode, summarised in one line for context.
         let prevLine = '';
+        let lastEpisodeId: string | null = null;
         try {
           const er = await mcp.call('entities.list', {
             type: '12000000-0000-0000-0000-000000000000',
-            search: pid,
+            filter: { patient_id: pid },
             limit: 50,
           });
           const eps = Array.isArray((er as any)?.data) ? (er as any).data : [];
@@ -251,6 +311,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             eps.sort((a: any, b: any) =>
               String(b?.data?.fecha || '').localeCompare(String(a?.data?.fecha || '')));
             const last = eps[0];
+            lastEpisodeId = (last?.id as string) || null;
             const motivo = last?.data?.motivo_consulta;
             if (motivo) {
               prevLine = `Consulta anterior (${last?.data?.fecha || 's/f'}): ${motivo}.`;
@@ -260,14 +321,32 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
 
         // "patient_info" is a non-presential lookup: show the data and stop.
         // "patient" (atención) assumes the patient is being attended, so the
-        // bot keeps going and opens the episode intake flow.
+        // bot opens a new episode and starts the ficha clínica.
         const infoOnly = (session.extracted_slots as any)?.mode === 'patient_info';
-        session.extracted_slots = {
-          ...(session.extracted_slots || {}),
-          mode: infoOnly ? 'patient_info' : 'patient',
-          patient_context: { id: pid, ...patientData },
-          ...(infoOnly ? {} : { form_state: { kind: 'episode' } }),
-        };
+        let fichaForm: BotForm | null = null;
+
+        if (infoOnly) {
+          // Non-presential lookup: link the session to the patient's most
+          // recent episode so "Mostrar ficha" opens that consultation.
+          session.active_episode_id = lastEpisodeId;
+          session.extracted_slots = {
+            ...(session.extracted_slots || {}),
+            mode: 'patient_info',
+            patient_context: { id: pid, ...patientData },
+            active_form: null,
+          };
+        } else {
+          const episodeId = await openEpisodeFicha(mcp, session, pid);
+          session.active_episode_id = episodeId;
+          fichaForm = fichaSectionForm(FICHA_FIRST_SECTION);
+          session.extracted_slots = {
+            ...(session.extracted_slots || {}),
+            mode: 'patient',
+            patient_context: { id: pid, ...patientData },
+            form_state: { kind: 'ficha', section: FICHA_FIRST_SECTION },
+            active_form: fichaForm,
+          };
+        }
 
         const ackText =
           `Paciente activo: ${nombre}` +
@@ -275,7 +354,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           (prevLine ? `\n  ${prevLine}` : '') +
           (infoOnly
             ? `\n\nModo información (no presencial). ¿Qué querés saber del paciente?`
-            : `\n\n¿Qué le pasa al paciente? Contame el motivo de consulta.`);
+            : `\n\nAbrí una consulta nueva. Empecemos la ficha clínica:`);
         session.turns = [
           ...session.turns,
           { role: 'user',      content: message },
@@ -287,6 +366,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           history: session.turns, toolCalls: [],
           active_patient_id: session.active_patient_id,
           active_episode_id: session.active_episode_id,
+          form: fichaForm,
         });
       }
       if (clrPatient) {
@@ -393,10 +473,23 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
 
           // Convenience: auto-activate newly created clinical entities so the
           // user can keep working without typing UUIDs back at the bot.
+          let extraForm: BotForm | null = null;
           if (result.ok && pa.tool === 'entities.create' && newId) {
             const createdType = (pa.args as any)?.entity_id;
             if (createdType === '11000000-0000-0000-0000-000000000000') {
               session.active_patient_id = newId;
+              // In atención mode, open a new episode and start the ficha.
+              if ((session.extracted_slots as any)?.mode !== 'patient_info') {
+                const episodeId = await openEpisodeFicha(mcp, session, newId);
+                session.active_episode_id = episodeId;
+                extraForm = fichaSectionForm(FICHA_FIRST_SECTION);
+                session.extracted_slots = {
+                  ...(session.extracted_slots || {}),
+                  mode: 'patient',
+                  form_state: { kind: 'ficha', section: FICHA_FIRST_SECTION },
+                  active_form: extraForm,
+                };
+              }
             } else if (createdType === '12000000-0000-0000-0000-000000000000') {
               session.active_episode_id = newId;
             }
@@ -414,6 +507,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             toolCalls: [{ name: pa.tool, args: pa.args, result }],
             active_patient_id: session.active_patient_id,
             active_episode_id: session.active_episode_id,
+            form: extraForm,
           });
         }
         if (confirmNo.test(message.trim())) {
@@ -441,9 +535,18 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       // Handles mode handshake, patient search/select and new-patient form.
       // Returns null when the turn should fall through to legacy handlers.
       {
-        const v1 = await handleV1Flow({ session, message, mcp });
+        const v1 = await handleV1Flow({ session, message, mcp, formSubmission });
         if (v1) {
           // session was already mutated + saved by handleV1Flow.
+          // Persist the active form on the session so it survives reloads
+          // and conversation switches (the form stays until it's filled).
+          if ('form' in v1) {
+            session.extracted_slots = {
+              ...(session.extracted_slots || {}),
+              active_form: v1.form ?? null,
+            };
+            await saveSession(mcp, session);
+          }
           return res.json({
             ok: true, session_id: sessionId, text: v1.text,
             history: session.turns,
@@ -452,7 +555,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             active_episode_id: session.active_episode_id,
             pending_action: session.pending_action,
             quick_replies: v1.quick_replies || [],
-            form: v1.form || null,
+            form: (session.extracted_slots as any)?.active_form ?? null,
           });
         }
       }
@@ -469,8 +572,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         }
         const [pat, eps, imgs] = await Promise.all([
           mcp.call('entities.get',  { id: activePatientId }),
-          mcp.call('entities.list', { type: '12000000-0000-0000-0000-000000000000', search: activePatientId, limit: 50 }),
-          mcp.call('entities.list', { type: '16000000-0000-0000-0000-000000000000', search: activePatientId, limit: 50 }),
+          mcp.call('entities.list', { type: '12000000-0000-0000-0000-000000000000', filter: { patient_id: activePatientId }, limit: 50 }),
+          mcp.call('entities.list', { type: '16000000-0000-0000-0000-000000000000', filter: { patient_id: activePatientId }, limit: 50 }),
         ]);
         const epList   = Array.isArray(eps.data)  ? eps.data  : [];
         const imgList  = Array.isArray(imgs.data) ? imgs.data : [];
@@ -597,8 +700,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         }
         const [pat, eps, imgs] = await Promise.all([
           mcp.call('entities.get',  { id: activePatientId }),
-          mcp.call('entities.list', { type: '12000000-0000-0000-0000-000000000000', search: activePatientId, limit: 100 }),
-          mcp.call('entities.list', { type: '16000000-0000-0000-0000-000000000000', search: activePatientId, limit: 100 }),
+          mcp.call('entities.list', { type: '12000000-0000-0000-0000-000000000000', filter: { patient_id: activePatientId }, limit: 100 }),
+          mcp.call('entities.list', { type: '16000000-0000-0000-0000-000000000000', filter: { patient_id: activePatientId }, limit: 100 }),
         ]);
         const mcpRef = mcp;
         const epIds = (Array.isArray(eps.data) ? eps.data : []).map((e: any) => e.id);
@@ -635,7 +738,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       // ── "/signs k=v k=v" — update signos_vitales on the active episode ──
       const signsMatch = message.trim().match(/^\/?\s*signs?\s+(.+)$/i);
       if (signsMatch && activeEpisodeId) {
-        const pairs = signsMatch[1].split(/\s+/).map(p => p.split('=')).filter(p => p.length === 2);
+        const pairs = signsMatch[1].split(/\s+/).map((p: string) => p.split('=')).filter((p: string[]) => p.length === 2);
         if (!pairs.length) {
           const ackText = 'Formato: signs PA=120/80 FC=70 T=36.5 SatO2=98';
           session.turns = [...session.turns,

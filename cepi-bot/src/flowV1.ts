@@ -15,11 +15,14 @@ export interface QuickReply { label: string; send: string; }
 
 /** A field of a bot-rendered form. */
 export interface BotFormField {
-  key: string;
+  /** Omitted for decorative `heading` fields. */
+  key?: string;
   label: string;
-  type?: 'text' | 'entity_search';
+  type?: 'text' | 'textarea' | 'checkbox' | 'radio' | 'heading' | 'entity_search';
   placeholder?: string;
   required?: boolean;
+  /** `radio` only — the available choices. */
+  options?: Array<string | { label: string; value: string | number | boolean }>;
   // `entity_search` only — live autocomplete against /api/entities:
   entity_id?: string;
   min_chars?: number;
@@ -48,13 +51,19 @@ export interface BotForm {
   submit_label?: string;
   /** When set, a submit button interpolates field values into this template. */
   submit_send?: string;
+  /**
+   * 'structured' — the form posts a { form_id, data } payload (ficha sections).
+   * Default (unset) — interpolates `submit_send` into a plain chat message.
+   */
+  submit_mode?: 'message' | 'structured';
   actions?: BotFormAction[];
 }
 
 export interface FlowResponse {
   text: string;
   quick_replies?: QuickReply[];
-  form?: BotForm;
+  /** present (form or null) ⇒ change the persisted active form; absent ⇒ keep it. */
+  form?: BotForm | null;
   pending_action_set?: boolean;
 }
 
@@ -92,16 +101,165 @@ const PATIENT_NEW_FORM: BotForm = {
   title: 'Nuevo paciente',
   fields: [
     { key: 'cedula', label: 'Cédula', placeholder: 'Ej: 12345678', required: true },
-    { key: 'nombre', label: 'Nombre completo', placeholder: 'Ej: Juan Pérez', required: true },
+    { key: 'nombre', label: 'Nombres', placeholder: 'Ej: Juan', required: true },
+    { key: 'apellidos', label: 'Apellidos', placeholder: 'Ej: Pérez', required: true },
   ],
   submit_label: 'Crear paciente',
-  submit_send: '/nuevo-paciente {cedula} || {nombre}',
+  submit_send: '/nuevo-paciente {cedula} || {nombre} || {apellidos}',
 };
+
+// ── Ficha clínica (docs/ficha.html) — episode sections §3..§7 ──────────────
+// Each section is a structured BotForm; submitting it updates the episode.
+export type FichaSection = 's3' | 's4' | 's6' | 's7';
+export const FICHA_ORDER: FichaSection[] = ['s3', 's4', 's6', 's7'];
+export const FICHA_FIRST_SECTION: FichaSection = 's3';
+
+function nextFichaSection(s: FichaSection): FichaSection | null {
+  const i = FICHA_ORDER.indexOf(s);
+  return i >= 0 && i < FICHA_ORDER.length - 1 ? FICHA_ORDER[i + 1] : null;
+}
+
+const FICHA_SKIP: BotFormAction = { label: 'Omitir sección', send: 'omitir seccion' };
+
+// Closed yes/no question rendered as a single radio (not an ambiguous checkbox).
+const SI_NO: Array<{ label: string; value: boolean }> = [
+  { label: 'Sí', value: true },
+  { label: 'No', value: false },
+];
+
+const FICHA_FORMS: Record<FichaSection, BotForm> = {
+  s3: {
+    id: 'ficha_s3',
+    title: '§3 Anamnesis',
+    submit_mode: 'structured',
+    submit_label: 'Guardar y seguir',
+    actions: [FICHA_SKIP],
+    fields: [
+      { key: 'motivo_consulta', label: 'Motivo de consulta', type: 'textarea' },
+      { key: 'tiempo_evolucion', label: 'Tiempo de evolución', type: 'text', placeholder: 'días, semanas, meses, años' },
+      { key: 'curso', label: 'Curso', type: 'radio', options: ['progresivo', 'regresivo', 'continuo', 'intermitente'] },
+      { key: 'sintomas_presente', label: '¿Presenta síntomas?', type: 'radio', options: SI_NO },
+      { key: 'picor', label: 'Picor (+)', type: 'text' },
+      { key: 'dolor', label: 'Dolor (+)', type: 'text' },
+      { key: 'causa_aparente_presente', label: '¿Causa aparente?', type: 'radio', options: SI_NO },
+      { key: 'causa_aparente', label: 'Detalle causa aparente', type: 'text' },
+      { key: 'patologia_asociada_presente', label: '¿Patología asociada / RAS?', type: 'radio', options: SI_NO },
+      { key: 'patologia_asociada', label: 'Detalle patología asociada', type: 'text' },
+      { key: 'tratamientos_previos_presente', label: '¿Tratamientos previos?', type: 'radio', options: SI_NO },
+      { key: 'tratamientos_previos', label: 'Detalle tratamientos previos', type: 'text' },
+      { key: 'anamnesis', label: 'Anamnesis (notas)', type: 'textarea' },
+    ],
+  },
+  s4: {
+    id: 'ficha_s4',
+    title: '§4 Examen físico',
+    submit_mode: 'structured',
+    submit_label: 'Guardar y seguir',
+    actions: [FICHA_SKIP],
+    fields: [
+      { type: 'heading', label: '4.1 Lesión elemental' },
+      { key: 'lesion_macula', label: 'Mácula', type: 'checkbox' },
+      { key: 'lesion_papula', label: 'Pápula', type: 'checkbox' },
+      { key: 'lesion_placa', label: 'Placa', type: 'checkbox' },
+      { key: 'lesion_vesicula', label: 'Vesícula', type: 'checkbox' },
+      { key: 'lesion_ampolla', label: 'Ampolla', type: 'checkbox' },
+      { key: 'lesion_tumor', label: 'Tumor', type: 'checkbox' },
+      { key: 'lesion_nodulo', label: 'Nódulo', type: 'checkbox' },
+      { key: 'lesion_ulcera', label: 'Úlcera', type: 'checkbox' },
+      { key: 'lesion_otra', label: 'Otra lesión', type: 'text' },
+      { type: 'heading', label: '4.2 Características individuales (+)' },
+      { key: 'caract_eritema', label: 'Eritema', type: 'text' },
+      { key: 'caract_descamacion', label: 'Descamación', type: 'text' },
+      { key: 'caract_exudacion', label: 'Exudación', type: 'text' },
+      { key: 'caract_liquenificacion', label: 'Liquenificación', type: 'text' },
+      { key: 'caract_otra', label: 'Otra característica', type: 'text' },
+      { type: 'heading', label: '4.3 Características topográficas' },
+      { key: 'topo_unica', label: 'Única', type: 'checkbox' },
+      { key: 'topo_multiples', label: 'Múltiples', type: 'checkbox' },
+      { key: 'topo_bilateral', label: 'Bilateral', type: 'checkbox' },
+      { key: 'topo_simetrico', label: 'Simétrico', type: 'checkbox' },
+      { key: 'topo_confluente', label: 'Confluente', type: 'checkbox' },
+      { key: 'topo_agrupadas', label: 'Agrupadas', type: 'checkbox' },
+      { key: 'topo_circular', label: 'Circular', type: 'checkbox' },
+      { key: 'topo_lineal', label: 'Lineal', type: 'checkbox' },
+      { key: 'topo_borde', label: 'Borde', type: 'checkbox' },
+      { key: 'topo_otra', label: 'Otra topografía', type: 'text' },
+      { type: 'heading', label: '4.4 Gravedad (0–3)' },
+      { key: 'gravedad_extension', label: 'Extensión', type: 'radio', options: ['0', '1', '2', '3'] },
+      { key: 'gravedad_intensidad', label: 'Intensidad', type: 'radio', options: ['0', '1', '2', '3'] },
+      { key: 'gravedad_funcionalidad', label: 'Funcionalidad', type: 'radio', options: ['0', '1', '2', '3'] },
+      { type: 'heading', label: '4.5 Patrón' },
+      { key: 'patron_inflam_epidermica', label: 'Inflamación epidérmica', type: 'checkbox' },
+      { key: 'patron_inflam_dermica', label: 'Inflamación dérmica', type: 'checkbox' },
+      { key: 'patron_necrosis', label: 'Necrosis', type: 'checkbox' },
+      { key: 'patron_tumor', label: 'Tumor', type: 'checkbox' },
+      { key: 'patron_color', label: 'Color', type: 'checkbox' },
+      { key: 'notas_examen', label: 'Notas del examen', type: 'textarea' },
+    ],
+  },
+  s6: {
+    id: 'ficha_s6',
+    title: '§6 Estudios complementarios',
+    submit_mode: 'structured',
+    submit_label: 'Guardar y seguir',
+    actions: [FICHA_SKIP],
+    fields: [
+      { key: 'estudios_complementarios_presente', label: '¿Tiene estudios complementarios?', type: 'radio', options: SI_NO },
+      { key: 'estudios_complementarios_resumen', label: 'Resumen de estudios', type: 'textarea' },
+    ],
+  },
+  s7: {
+    id: 'ficha_s7',
+    title: '§7 Tratamiento y plan',
+    submit_mode: 'structured',
+    submit_label: 'Finalizar consulta',
+    actions: [FICHA_SKIP],
+    fields: [
+      { key: 'tratamiento_resumen', label: 'Tratamiento', type: 'textarea' },
+      { key: 'plan', label: 'Plan', type: 'textarea' },
+      { key: 'proximo_control_fecha', label: 'Próximo control', type: 'text', placeholder: 'YYYY-MM-DD' },
+      { key: 'proximo_control_motivo', label: 'Motivo del próximo control', type: 'text' },
+    ],
+  },
+};
+
+/** The BotForm for a ficha section (used by server.ts and the flow). */
+export function fichaSectionForm(section: FichaSection): BotForm {
+  return FICHA_FORMS[section];
+}
+
+// Key routing for a full-ficha "Guardar": §1–§2 → paciente, §3–§7 → episodio.
+// Identity fields (nombre/apellidos/cedula) are intentionally excluded.
+const FICHA_PATIENT_KEYS = new Set<string>([
+  'direccion', 'telefono', 'sector_ciudad', 'ocupacion', 'email', 'edad',
+  'sexo', 'etnia', 'etnia_otra', 'escolaridad_anios', 'escolaridad_grado',
+  'condicion_socioeconomica', 'antecedentes_personales',
+  'antecedentes_personales_presente', 'antecedentes_familiares',
+  'antecedentes_familiares_presente',
+]);
+const FICHA_EPISODE_KEYS = new Set<string>([
+  ...FICHA_ORDER.flatMap(s =>
+    FICHA_FORMS[s].fields.map(f => f.key).filter((k): k is string => !!k)),
+  'ficha_num', 'examinador_nombre', 'diagnostico', 'diagnostico_letra',
+  'regiones_afectadas',
+]);
+
+/** Traffic-light label for a §5 diagnosis letter. */
+const DX_COLOR: Record<string, string> = { A: 'verde', B: 'amarillo', C: 'rojo' };
+
+/** A structured form submission from the frontend (ficha sections). */
+export interface FormSubmission {
+  form_id: string;
+  data: Record<string, unknown>;
+  /** ficha_save only — the episode being saved (paginator may differ from active). */
+  episode_id?: string;
+}
 
 interface Ctx {
   session: BotSession;
   message: string;
   mcp: TodoErpMcpClient;
+  formSubmission?: FormSubmission;
 }
 
 type FlowMode = 'unset' | 'general' | 'patient' | 'patient_info';
@@ -135,6 +293,65 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
   const trimmed = message.trim();
   const mode = getMode(session);
 
+  // ── Ficha clínica "Guardar" — full ficha edited in the modal viewer ──
+  // Routes §1–§2 keys to the patient and §3–§7 keys to the active episode,
+  // then refreshes the patient context held in the session.
+  if (ctx.formSubmission?.form_id === 'ficha_save') {
+    const data = (ctx.formSubmission.data || {}) as Record<string, unknown>;
+    const patientData: Record<string, unknown> = {};
+    const episodeData: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (FICHA_PATIENT_KEYS.has(k)) patientData[k] = v;
+      else if (FICHA_EPISODE_KEYS.has(k)) episodeData[k] = v;
+    }
+    const epId = ctx.formSubmission.episode_id || session.active_episode_id;
+    const errs: string[] = [];
+    if (session.active_patient_id && Object.keys(patientData).length) {
+      const r = await mcp.call('entities.update', {
+        id: session.active_patient_id, record_type: 'business', data: patientData,
+      });
+      if (!(r as any)?.ok) errs.push(`paciente: ${(r as any)?.error || 'error'}`);
+    }
+    if (epId && Object.keys(episodeData).length) {
+      const r = await mcp.call('entities.update', {
+        id: epId, record_type: 'business', data: episodeData,
+      });
+      if (!(r as any)?.ok) errs.push(`episodio: ${(r as any)?.error || 'error'}`);
+    }
+    // Refresh the patient context the session carries for the bot.
+    if (session.active_patient_id) {
+      try {
+        const pr = await mcp.call('entities.get', { id: session.active_patient_id });
+        const pd = ((pr as any)?.data?.data) || {};
+        setSlot(session, 'patient_context', { id: session.active_patient_id, ...pd });
+      } catch { /* keep prior context */ }
+    }
+    const text = errs.length
+      ? `Guardé la ficha con observaciones — ${errs.join('; ')}.`
+      : 'Ficha guardada. Los cambios quedaron en el paciente y el episodio.';
+    await appendAndSave(session, '📋 Ficha guardada', text, mcp);
+    return { text };
+  }
+
+  // ── §5 Diagnóstico traffic-light — set A/B/C on the active episode ──
+  if (ctx.formSubmission?.form_id === 'set_diagnostico') {
+    const letra = String(ctx.formSubmission.data?.diagnostico_letra || '').toUpperCase();
+    const epId = ctx.formSubmission.episode_id || session.active_episode_id;
+    if (!['A', 'B', 'C'].includes(letra) || !epId) {
+      const text = 'No pude registrar el diagnóstico (falta letra o episodio).';
+      await appendAndSave(session, 'Diagnóstico', text, mcp);
+      return { text };
+    }
+    const r = await mcp.call('entities.update', {
+      id: epId, record_type: 'business', data: { diagnostico_letra: letra },
+    });
+    const text = (r as any)?.ok
+      ? `Diagnóstico del episodio: ${letra} (${DX_COLOR[letra]}).`
+      : `No pude registrar el diagnóstico: ${(r as any)?.error || 'error'}.`;
+    await appendAndSave(session, `Diagnóstico: ${letra}`, text, mcp);
+    return { text };
+  }
+
   // ── mode setters (work in any state) ─────────────────────────────
   if (/^\s*\/?\s*(general|consulta\s+general)\s*$/i.test(trimmed)) {
     setSlot(session, 'mode', 'general');
@@ -167,42 +384,43 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
 
   // ── patient / patient_info mode without active patient: search/new ───────
   if ((mode === 'patient' || mode === 'patient_info') && !session.active_patient_id) {
-    // New-patient form submission: "/nuevo-paciente <cedula> || <nombre>".
+    // New-patient form submission: "/nuevo-paciente <cedula> || <nombre> || <apellidos>".
     const npm = trimmed.match(
-      /^\/?\s*nuevo-paciente\s+([\s\S]+?)\s*\|\|\s*([\s\S]+)$/i,
+      /^\/?\s*nuevo-paciente\s+([\s\S]+?)\s*\|\|\s*([\s\S]+?)\s*\|\|\s*([\s\S]+)$/i,
     );
     if (npm) {
       const cedula = npm[1].trim();
       const nombre = npm[2].trim();
-      if (!cedula || !nombre) {
-        const text = 'Faltan datos: cédula y nombre son obligatorios.';
+      const apellidos = npm[3].trim();
+      if (!cedula || !nombre || !apellidos) {
+        const text = 'Faltan datos: cédula, nombres y apellidos son obligatorios.';
         await appendAndSave(session, message, text, mcp);
         return { text, form: PATIENT_NEW_FORM };
       }
+      // On confirmation the server auto-activates the patient and, in
+      // atención mode, opens a new episode + the ficha clínica (§3 form).
+      const isAttention = mode === 'patient';
       session.pending_action = {
-        summary: `Crear paciente ${nombre} (cédula ${cedula})`,
+        summary: `Crear paciente ${nombre} ${apellidos} (cédula ${cedula})`,
         tool: 'entities.create',
         args: {
           record_type: 'business',
           entity_id: PATIENT_ENTITY_ID,
           title: `paciente_${cedula}`,
-          data: { cedula, nombre },
+          data: { cedula, nombre, apellidos },
         },
-        successMessage: `Paciente creado (id: {{id}}). Lo activo.`,
+        successMessage: isAttention
+          ? `Listo, ${nombre} ${apellidos} quedó registrado. Abrimos la consulta — empecemos la ficha clínica:`
+          : `Listo, ${nombre} ${apellidos} quedó registrado y es el paciente activo.`,
         createdAt: new Date().toISOString(),
       };
-      const userMsg = `Nuevo paciente: ${nombre} · ${cedula}`;
+      const userMsg = `Nuevo paciente: ${nombre} ${apellidos} · ${cedula}`;
       const text =
-        `Crear paciente:\n  • Cédula: ${cedula}\n  • Nombre: ${nombre}\n\n¿Confirmas?`;
+        `Crear paciente:\n  • Cédula: ${cedula}\n  • Nombres: ${nombre}\n` +
+        `  • Apellidos: ${apellidos}\n\n¿Confirmas?`;
       await appendAndSave(session, userMsg, text, mcp);
-      return {
-        text,
-        pending_action_set: true,
-        quick_replies: [
-          { label: '✓ Confirmar', send: 'sí' },
-          { label: '✗ Cancelar', send: 'no' },
-        ],
-      };
+      // The confirmation card already carries ✓/✗ — no duplicate quick replies.
+      return { text, pending_action_set: true };
     }
 
     // Trigger new-patient form
@@ -245,75 +463,72 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
     };
   }
 
-  // ── patient mode WITH active patient, no episode: guided episode intake ──
-  // After a patient is activated (server.ts), the bot keeps the conversation
-  // going: it collects the episode fields one question at a time and stages
-  // the creation behind the confirmation gate.
-  if (mode === 'patient' && session.active_patient_id && !session.active_episode_id) {
+  // ── patient mode WITH active patient: ficha clínica section flow ──
+  // After the patient is activated and an episode opened (server.ts), the bot
+  // walks the ficha section by section. Each section is a structured BotForm;
+  // submitting it merges the data into the episode via entities.update.
+  if (mode === 'patient' && session.active_patient_id) {
     const fs = (session.extracted_slots as any)?.form_state as
-      | { kind: 'episode'; motivo?: string; tipo?: string }
+      | { kind: 'ficha'; section: FichaSection }
       | undefined;
 
-    if (fs?.kind === 'episode') {
-      // Step 1 — motivo de consulta (what's wrong with the patient).
-      if (!fs.motivo) {
-        fs.motivo = trimmed;
-        setSlot(session, 'form_state', fs);
-        const text = `Motivo: ${fs.motivo}\n¿Tipo de consulta?`;
-        await appendAndSave(session, message, text, mcp);
-        return {
-          text,
-          quick_replies: [
-            { label: 'Presencial', send: 'presencial' },
-            { label: 'Virtual', send: 'virtual' },
-          ],
-        };
-      }
-      // Step 2 — tipo, then stage the episode behind the confirmation gate.
-      if (!fs.tipo) {
-        const tipo = /virtual/i.test(trimmed) ? 'virtual' : 'presencial';
-        const today = new Date().toISOString().slice(0, 10);
-        let medicoId: string | null = null;
-        try {
-          const me = await mcp.call('auth.whoami', {});
-          medicoId = ((me as any)?.data?.user?.id as string) || null;
-        } catch { /* leave null */ }
-        session.pending_action = {
-          summary: `Crear episodio para el paciente activo (motivo: ${fs.motivo})`,
-          tool: 'entities.create',
-          args: {
-            record_type: 'business',
-            entity_id: EPISODE_ENTITY_ID,
-            title: `episode_${today}`,
-            data: {
-              [`${PATIENT_ENTITY_ID}:patient_id`]: session.active_patient_id,
-              medico_id: medicoId,
-              fecha: today,
-              tipo,
-              motivo_consulta: fs.motivo,
-              estado: 'en_curso',
-            },
-          },
-          successMessage: `Episodio creado (id: {{id}}). Lo activo automáticamente.`,
-          createdAt: new Date().toISOString(),
-        };
+    if (fs?.kind === 'ficha') {
+      const section: FichaSection = fs.section || 's3';
+      const sub = ctx.formSubmission;
+      const isSubmit = !!sub && typeof sub.form_id === 'string'
+        && sub.form_id.startsWith('ficha_s');
+      const isSkip = /^\s*\/?\s*omitir(\s+secci[oó]n)?\s*$/i.test(trimmed);
+
+      if (isSubmit || isSkip) {
+        const title = FICHA_FORMS[section].title;
+        const userMsg = isSkip ? 'Omitir sección' : `📋 ${title} enviada`;
+        let savedNote = `${title} omitida.`;
+
+        if (isSubmit && session.active_episode_id) {
+          const data: Record<string, unknown> = { ...(sub!.data || {}) };
+          // §4 — gravedad fields are numeric; radio values arrive as strings.
+          if (section === 's4') {
+            const gKeys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
+            for (const k of gKeys) {
+              if (data[k] != null && data[k] !== '') data[k] = Number(data[k]);
+            }
+            if (gKeys.some(k => data[k] != null)) {
+              data.gravedad_total = gKeys.reduce((a, k) => a + (Number(data[k]) || 0), 0);
+            }
+          }
+          if (Object.keys(data).length) {
+            const upd = await mcp.call('entities.update', {
+              id: session.active_episode_id,
+              record_type: 'business',
+              data,
+            });
+            if (!(upd as any)?.ok) {
+              const text = `No pude guardar ${title}: ${(upd as any)?.error || 'error desconocido'}.\n` +
+                `Revisá los datos y volvé a enviar.`;
+              await appendAndSave(session, userMsg, text, mcp);
+              return { text, form: FICHA_FORMS[section] };
+            }
+          }
+          savedNote = `${title} guardada.`;
+        }
+
+        const next = nextFichaSection(section);
+        if (next) {
+          setSlot(session, 'form_state', { kind: 'ficha', section: next });
+          const text = `${savedNote} Continuemos con ${FICHA_FORMS[next].title}.`;
+          await appendAndSave(session, userMsg, text, mcp);
+          return { text, form: FICHA_FORMS[next] };
+        }
         clearSlot(session, 'form_state');
-        const text =
-          `Voy a crear el episodio:\n` +
-          `  • motivo: ${fs.motivo}\n` +
-          `  • tipo: ${tipo}\n` +
-          `  • fecha: ${today}\n\n` +
-          `¿Confirmas?`;
-        await appendAndSave(session, message, text, mcp);
-        return {
-          text,
-          pending_action_set: true,
-          quick_replies: [
-            { label: '✓ Confirmar', send: 'sí' },
-            { label: '✗ Cancelar', send: 'no' },
-          ],
-        };
+        const text = `${savedNote}\n\nLa ficha de la consulta quedó registrada. ¿Algo más?`;
+        await appendAndSave(session, userMsg, text, mcp);
+        return { text, form: null };   // ficha done — clear the persisted form
       }
+
+      // Free text while a ficha section is open — re-show the current section.
+      const text = `Completá la sección ${FICHA_FORMS[section].title}, o tocá "Omitir sección".`;
+      await appendAndSave(session, message, text, mcp);
+      return { text, form: FICHA_FORMS[section] };
     }
   }
 

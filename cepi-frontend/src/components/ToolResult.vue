@@ -167,7 +167,7 @@ function format(v) {
   border-radius: 3px; font-size: 11px; cursor: pointer;
 }
 .quick-btn:hover { background: #166534; }
-.muted { color: #a16207; font-style: italic; margin: 0; }
+.muted { color: #835000; font-style: italic; margin: 0; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
 .kv dt { color: #92400e; font-weight: 600; font-size: 12px; }
 .kv dd { margin: 0; font-family: ui-monospace, monospace; font-size: 12px; color: #422006; word-break: break-word; }

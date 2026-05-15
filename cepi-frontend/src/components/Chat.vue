@@ -28,7 +28,7 @@
           :title="s.title"
           @click="openSession(s.id)"
         >
-          <div class="session-preview">{{ s.preview || '(sin mensajes)' }}</div>
+          <div class="session-preview">{{ s.patient_name || s.preview || '(sin mensajes)' }}</div>
           <div class="session-meta">
             <span class="session-date">{{ formatSessionDate(s.updated_at || s.created_at) }}</span>
             <span class="session-state" :class="s.estado">{{ s.estado }}</span>
@@ -87,6 +87,26 @@
       @dragleave.prevent="dragOver = false"
       @drop.prevent="onDrop"
     >
+      <div v-if="activePatient" class="patient-bar">
+        <span class="pb-name">👤 {{ patientLabel || 'Paciente activo' }}</span>
+        <div class="pb-right">
+          <div v-if="activeEpisode" class="dx-light" title="Diagnóstico — semáforo A/B/C">
+            <span class="dx-caption">Dx</span>
+            <button
+              v-for="opt in dxOptions"
+              :key="opt.letra"
+              type="button"
+              class="dx-dot"
+              :class="[opt.cls, { on: diagnosticoLetra === opt.letra }]"
+              :title="opt.title"
+              :disabled="busy"
+              @click="setDiagnostico(opt.letra)"
+            >{{ opt.letra }}</button>
+          </div>
+          <button class="pb-ficha" type="button" @click="openFicha">Mostrar ficha</button>
+        </div>
+      </div>
+
       <div class="scroll-area" ref="feedEl" @scroll.passive="onScrollAreaScroll">
         <div class="inner">
           <div class="welcome">
@@ -130,16 +150,14 @@
 
           <BotForm
             v-if="botForm && !busy"
+            :key="botForm.id"
             :form="botForm"
             :busy="busy"
             @send="send"
+            @submit="onFormSubmit"
           />
 
           <div v-if="pending" class="pending-card">
-            <div class="pending-head">
-              <span class="pending-tag">Pendiente</span>
-              <code class="pending-tool">{{ pending.tool }}</code>
-            </div>
             <p class="pending-summary">{{ pending.summary }}</p>
             <div class="pending-actions">
               <button class="confirm" @click="send('sí')" :disabled="busy">✓ Confirmar</button>
@@ -177,6 +195,39 @@
         </div>
       </div>
     </section>
+
+    <div v-if="showFicha" class="ficha-modal" @click.self="showFicha = false">
+      <div class="ficha-panel">
+        <div class="ficha-head">
+          <strong>Ficha clínica — {{ patientLabel || 'Paciente' }}</strong>
+          <div class="ficha-head-actions">
+            <button type="button" class="fh-save" @click="onSaveFicha">Guardar</button>
+            <button type="button" @click="printFicha">Imprimir</button>
+            <button type="button" @click="showFicha = false">Cerrar</button>
+          </div>
+        </div>
+        <div class="ficha-pager">
+          <button
+            type="button"
+            :disabled="fichaIndex >= fichaEpisodes.length - 1"
+            @click="fichaStep(1)"
+          >‹ Anterior</button>
+          <span class="fp-label">{{ fichaPagerLabel }}</span>
+          <button
+            type="button"
+            :disabled="fichaIndex <= 0"
+            @click="fichaStep(-1)"
+          >Siguiente ›</button>
+        </div>
+        <iframe
+          :key="fichaIndex"
+          ref="fichaFrame"
+          class="ficha-frame"
+          src="/ficha.html"
+          @load="onFichaLoad"
+        ></iframe>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -207,6 +258,138 @@ const activeEpisode = ref(null);
 const pending = ref(null);
 const quickReplies = ref([]);
 const botForm = ref(null);
+const showFicha = ref(false);
+const fichaFrame = ref(null);
+const fichaEpisodes = ref([]);   // patient's episodes, most-recent first
+const fichaIndex = ref(0);       // which episode the viewer is showing
+
+const fichaPagerLabel = computed(() => {
+  const total = fichaEpisodes.value.length;
+  if (!total) return 'Sin episodios registrados';
+  const ep = fichaEpisodes.value[fichaIndex.value];
+  const fecha = ep?.data?.fecha || 's/f';
+  return `${fecha} · episodio ${total - fichaIndex.value} de ${total}`;
+});
+
+async function fetchEntity(id) {
+  try {
+    const res = await fetch(`/api/entities/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('cepi.jwt') || ''}` },
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body?.data || null;
+  } catch {
+    return null;
+  }
+}
+
+// All episodes of a patient, sorted most-recent first (for the ficha paginator).
+async function fetchEpisodes(patientId) {
+  try {
+    const params = new URLSearchParams({
+      type: 'business',
+      entity_id: '12000000-0000-0000-0000-000000000000',
+      'filter[patient_id]': patientId,
+      limit: '100',
+    });
+    const res = await fetch(`/api/entities?${params}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('cepi.jwt') || ''}` },
+    });
+    if (!res.ok) return [];
+    const body = await res.json();
+    const rows = Array.isArray(body?.data) ? body.data : [];
+    rows.sort((a, b) =>
+      String(b?.data?.fecha || '').localeCompare(String(a?.data?.fecha || '')));
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+// Open the ficha viewer: load the patient's episodes and start on the
+// session's active episode (the last one in patient-info mode).
+async function openFicha() {
+  fichaEpisodes.value = [];
+  fichaIndex.value = 0;
+  if (activePatient.value) {
+    const eps = await fetchEpisodes(activePatient.value);
+    fichaEpisodes.value = eps;
+    const i = eps.findIndex(e => e.id === activeEpisode.value);
+    fichaIndex.value = i >= 0 ? i : 0;
+  }
+  showFicha.value = true;
+}
+
+// Paginate: dir +1 → older episode, -1 → newer. The iframe :key reloads it.
+function fichaStep(dir) {
+  const n = fichaIndex.value + dir;
+  if (n >= 0 && n < fichaEpisodes.value.length) fichaIndex.value = n;
+}
+
+// Fill docs/ficha.html (served from /ficha.html) with patient + episode data.
+async function onFichaLoad() {
+  const frame = fichaFrame.value;
+  if (!frame?.contentWindow?.fillFicha) return;
+  let pdata = {};
+  if (activePatient.value) {
+    const p = await fetchEntity(activePatient.value);
+    pdata = p?.data || {};
+  }
+  const edata = fichaEpisodes.value[fichaIndex.value]?.data || {};
+  const data = { ...pdata, ...edata };
+  data.nombre = [pdata.nombre, pdata.apellidos].filter(Boolean).join(' ') || data.nombre;
+  if (!data.edad && pdata.fecha_nac) {
+    const d = new Date(pdata.fecha_nac);
+    if (!isNaN(d.getTime())) {
+      const now = new Date();
+      let a = now.getFullYear() - d.getFullYear();
+      const m = now.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+      if (a >= 0 && a < 150) data.edad = a;
+    }
+  }
+  try { frame.contentWindow.fillFicha(data); } catch { /* ficha API not ready */ }
+
+  // Highlight (red + bold) the labels of fields whose value differs from the
+  // previous (older) episode's ficha.
+  try {
+    const cur = fichaEpisodes.value[fichaIndex.value]?.data || {};
+    const prev = fichaEpisodes.value[fichaIndex.value + 1]?.data;
+    const changed = [];
+    if (prev) {
+      const SKIP = new Set([
+        'id', 'fecha', 'medico_id', 'patient_id', 'estado', 'tipo',
+        'created_at', 'updated_at', 'ficha_num', 'examinador_nombre',
+        'gravedad_total', 'location',
+      ]);
+      const norm = v =>
+        (v === null || v === undefined || v === false || v === '') ? '' : String(v);
+      const keys = new Set([...Object.keys(cur), ...Object.keys(prev)]);
+      for (const k of keys) {
+        if (SKIP.has(k) || k.includes(':')) continue;
+        if (norm(cur[k]) !== norm(prev[k])) changed.push(k);
+      }
+    }
+    frame.contentWindow.markChanges?.(changed);
+  } catch { /* diff is best-effort */ }
+}
+
+function printFicha() {
+  fichaFrame.value?.contentWindow?.print();
+}
+
+// Read the edited ficha and persist it through the bot (updates both the
+// patient + episode records and the chat's patient context).
+function onSaveFicha() {
+  const frame = fichaFrame.value;
+  if (!frame?.contentWindow?.readFicha) return;
+  let data;
+  try { data = frame.contentWindow.readFicha(); } catch { return; }
+  const ep = fichaEpisodes.value[fichaIndex.value];
+  showFicha.value = false;
+  send('', { formSubmission: { form_id: 'ficha_save', episode_id: ep?.id || null, data } });
+}
 
 function onQuickReply(q) {
   quickReplies.value = [];
@@ -214,6 +397,26 @@ function onQuickReply(q) {
 }
 const patientLabel = ref('');
 const episodeLabel = ref('');
+const diagnosticoLetra = ref('');   // §5 traffic-light: '', 'A', 'B' or 'C'
+const dxOptions = [
+  { letra: 'A', cls: 'dx-a', title: 'A — verde' },
+  { letra: 'B', cls: 'dx-b', title: 'B — amarillo' },
+  { letra: 'C', cls: 'dx-c', title: 'C — rojo' },
+];
+
+// Set the §5 diagnosis letter on the active episode (optimistic + persisted).
+function setDiagnostico(letra) {
+  if (busy.value || !activeEpisode.value) return;
+  diagnosticoLetra.value = letra;
+  send('', {
+    formSubmission: {
+      form_id: 'set_diagnostico',
+      episode_id: activeEpisode.value,
+      data: { diagnostico_letra: letra },
+    },
+  });
+}
+
 const dragOver = ref(false);
 const feedEl = ref(null);
 const composerEl = ref(null);
@@ -251,14 +454,21 @@ async function scrollToEnd({ force = false } = {}) {
   el.scrollTop = el.scrollHeight;
 }
 
-async function send(message) {
-  if (!message.trim() || busy.value) return;
+// Structured form submission ({ form_id, data }) from a BotForm ficha section.
+function onFormSubmit(payload) {
+  send('', { formSubmission: payload });
+}
+
+async function send(message, opts = {}) {
+  const fs = opts.formSubmission || null;
+  if ((!message || !message.trim()) && !fs) return;
+  if (busy.value) return;
   busy.value = true;
   error.value = '';
   // Optimistically render the user turn while waiting.
-  turns.value = [...turns.value, { role: 'user', content: message }];
+  turns.value = [...turns.value, { role: 'user', content: message || '📋 Formulario enviado' }];
   try {
-    const r = await chat(message, sessionId.value);
+    const r = await chat(message || '', sessionId.value, fs ? { formSubmission: fs } : {});
     if (r?.session_id) {
       sessionId.value = r.session_id;
       saveSessionId(r.session_id);
@@ -267,7 +477,9 @@ async function send(message) {
     if (typeof r?.active_episode_id !== 'undefined') activeEpisode.value = r.active_episode_id;
     if (typeof r?.pending_action     !== 'undefined') pending.value = r.pending_action;
     quickReplies.value = Array.isArray(r?.quick_replies) ? r.quick_replies : [];
-    botForm.value = r?.form || null;
+    // Only touch the form when the response explicitly carries one — other
+    // turns leave it in place so it persists until filled.
+    if (r && 'form' in r) botForm.value = r.form || null;
     if (r?.download && r.download.content) {
       const blob = new Blob([r.download.content], { type: r.download.content_type || 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
@@ -364,10 +576,15 @@ async function resolveLabel(id, fields) {
   }
 }
 watch(activePatient, async (v) => {
+  showFicha.value = false;
   patientLabel.value = v ? await resolveLabel(v, ['nombre', 'apellidos']) : '';
 });
 watch(activeEpisode, async (v) => {
-  episodeLabel.value = v ? await resolveLabel(v, ['fecha', 'motivo_consulta']) : '';
+  if (!v) { episodeLabel.value = ''; diagnosticoLetra.value = ''; return; }
+  const e = await fetchEntity(v);
+  const d = e?.data || {};
+  episodeLabel.value = [d.fecha, d.motivo_consulta].filter(Boolean).join(' · ');
+  diagnosticoLetra.value = d.diagnostico_letra || '';
 });
 
 function newSession() {
@@ -402,7 +619,7 @@ async function openSession(id) {
     activeEpisode.value = s.active_episode_id || null;
     pending.value       = s.pending_action     || null;
     quickReplies.value  = [];
-    botForm.value       = null;
+    botForm.value       = s.form || null;   // restore the persisted form
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
@@ -516,6 +733,7 @@ watch(sessionId, () => { refreshSessions(); });
 }
 .session-item {
   background: var(--bot-bg, #fff);
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
@@ -564,7 +782,7 @@ watch(sessionId, () => { refreshSessions(); });
   background: var(--accent); border-color: var(--accent); color: #fff;
 }
 .shortcuts button:disabled { opacity: .5; cursor: not-allowed; }
-.muted { color: #94a3b8; font-size: 12px; word-break: break-all; }
+.muted { color: var(--text-muted); font-size: 12px; word-break: break-all; }
 
 .ctx { display: flex; flex-direction: column; gap: 6px; }
 .ctx-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -572,7 +790,7 @@ watch(sessionId, () => { refreshSessions(); });
 .ctx code  { font-family: ui-monospace, monospace; color: #1e293b; background: #f1f5f9; padding: 2px 4px; border-radius: 3px; }
 .ctx-uuid  { margin-left: 4px; font-size: 10px; color: #64748b; }
 .ctx strong { color: #1e293b; font-size: 12px; }
-.ctx .link { background: transparent; color: #94a3b8; border: 0; padding: 0; cursor: pointer; }
+.ctx .link { background: transparent; color: var(--text-muted); border: 0; padding: 0; cursor: pointer; }
 
 .main {
   display: flex; flex-direction: column;
@@ -651,7 +869,7 @@ watch(sessionId, () => { refreshSessions(); });
 .turn.tool      { align-self: flex-start; max-width: 95%; }
 .turn.user .role      { color: var(--accent); }
 .turn.assistant .role { color: var(--accent); }
-.turn.tool .role      { color: #a16207; }
+.turn.tool .role      { color: #835000; }
 
 .content {
   margin: 0; white-space: pre-wrap; word-break: break-word;
@@ -667,7 +885,7 @@ watch(sessionId, () => { refreshSessions(); });
   border: 1px solid var(--border); border-bottom-left-radius: 4px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
-.tool-name { font-size: 11px; color: #94a3b8; align-self: start; }
+.tool-name { font-size: 11px; color: var(--text-muted); align-self: start; }
 
 .composer {
   display: flex; gap: 0.5rem;
@@ -756,4 +974,87 @@ html[data-theme="dark"] .composer textarea {
   transition: background 0.15s, color 0.15s;
 }
 .quick-reply:hover { background: var(--accent); color: #fff; }
+
+/* Sticky patient bar at the top of the chat. */
+.patient-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 14px; flex-shrink: 0;
+  background: var(--accent-band, #f1f5f9);
+  border-bottom: 1px solid var(--border);
+}
+.pb-name { font-weight: 700; font-size: 0.9rem; color: #fff; }
+.pb-ficha {
+  border: 1.5px solid var(--accent); background: #fff; color: var(--accent);
+  border-radius: 16px; padding: 0.32rem 0.9rem;
+  font-weight: 700; font-size: 0.8rem; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pb-ficha:hover { background: var(--accent); color: #fff; }
+
+.pb-right { display: flex; align-items: center; gap: 12px; }
+.dx-light { display: flex; align-items: center; gap: 4px; }
+.dx-caption {
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: #fff; margin-right: 2px;
+}
+.dx-dot {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 1.6px solid currentColor; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 0.74rem;
+  opacity: .5; transition: opacity .12s, transform .1s;
+}
+.dx-dot:hover:not(:disabled) { opacity: 1; transform: scale(1.08); }
+.dx-dot:disabled { cursor: not-allowed; }
+.dx-dot.on { opacity: 1; color: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.12); }
+.dx-a { color: #1f9d57; }
+.dx-b { color: #b9881a; }
+.dx-c { color: #c43d3d; }
+.dx-a.on { background: #1f9d57; border-color: #1f9d57; }
+.dx-b.on { background: #d8a01f; border-color: #d8a01f; }
+.dx-c.on { background: #c43d3d; border-color: #c43d3d; }
+
+/* Ficha clínica modal viewer. */
+.ficha-modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.ficha-panel {
+  background: #fff; border-radius: 10px; overflow: hidden;
+  width: min(840px, 96vw); height: min(96vh, 1200px);
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+.ficha-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.ficha-head-actions { display: flex; gap: 6px; }
+.ficha-head button {
+  border: 1.5px solid var(--border); background: #f8fafc; color: var(--text);
+  border-radius: 6px; padding: 4px 12px; cursor: pointer;
+  font-weight: 600; font-size: 0.82rem;
+}
+.ficha-head button:hover { border-color: var(--accent); color: var(--accent); }
+.ficha-head button.fh-save {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.ficha-head button.fh-save:hover { background: var(--accent-hover); color: #fff; }
+.ficha-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 6px 12px; flex-shrink: 0;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.ficha-pager button {
+  border: 1.5px solid var(--border); background: #fff; color: var(--text);
+  border-radius: 6px; padding: 3px 12px; cursor: pointer;
+  font-weight: 600; font-size: 0.8rem;
+}
+.ficha-pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.ficha-pager button:disabled { opacity: .4; cursor: not-allowed; }
+.fp-label { font-size: 0.82rem; color: var(--text-muted); font-weight: 600; }
+.ficha-frame { flex: 1; width: 100%; border: 0; background: #e8e8e8; }
 </style>

@@ -5,7 +5,7 @@
   --border: #d0d7de;
   --accent: #63421e;
   --accent-band: rgb(159 109 30 / 70%);
-  --accent-hover: #4da8cf;
+  --accent-hover: #7c5526;
   --text: #212121;
   --text-muted: #686969;
   --user-bg: #63421e;
@@ -15,7 +15,8 @@
   --header-h: 60px;
 
   font-family: 'Nunito', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color-scheme: light dark;
+  /* Force native controls to follow the app theme, not the OS setting. */
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
 }
@@ -26,6 +27,7 @@ html[data-theme="dark"] {
   --text: #e2e8f0;
   --text-muted: #94a3b8;
   --bot-bg: #1e293b;
+  color-scheme: dark;
   color: var(--text);
   background: var(--bg);
 }
