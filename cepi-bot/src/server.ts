@@ -25,7 +25,7 @@ import { ChatTurn } from './llm.js';
 import { TodoErpMcpClient } from './mcpClient.js';
 import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID, BotSession } from './sessionStore.js';
 import {
-  handleV1Flow, fichaSectionForm, FICHA_FIRST_SECTION, BotForm,
+  handleV1Flow, fichaGroupFormFilled, FICHA_FIRST_GROUP, fichaBookmarks, BotForm,
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
 
@@ -162,6 +162,8 @@ app.get('/api/bot/session/:id', async (req: Request, res: Response, next: NextFu
       active_episode_id: s.active_episode_id,
       pending_action: s.pending_action,
       form: (s.extracted_slots as any)?.active_form ?? null,
+      bookmarks: ((s.extracted_slots as any)?.form_state?.kind === 'ficha')
+        ? await fichaBookmarks(mcp, s) : [],
     });
   } catch (err) { next(err); }
   finally {
@@ -338,12 +340,13 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         } else {
           const episodeId = await openEpisodeFicha(mcp, session, pid);
           session.active_episode_id = episodeId;
-          fichaForm = fichaSectionForm(FICHA_FIRST_SECTION);
+          fichaForm = await fichaGroupFormFilled(FICHA_FIRST_GROUP, mcp, session);
           session.extracted_slots = {
             ...(session.extracted_slots || {}),
             mode: 'patient',
             patient_context: { id: pid, ...patientData },
-            form_state: { kind: 'ficha', section: FICHA_FIRST_SECTION },
+            form_state: { kind: 'ficha' },
+            ficha_done: [],
             active_form: fichaForm,
           };
         }
@@ -367,6 +370,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           active_patient_id: session.active_patient_id,
           active_episode_id: session.active_episode_id,
           form: fichaForm,
+          bookmarks: await fichaBookmarks(mcp, session),
         });
       }
       if (clrPatient) {
@@ -482,11 +486,12 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
               if ((session.extracted_slots as any)?.mode !== 'patient_info') {
                 const episodeId = await openEpisodeFicha(mcp, session, newId);
                 session.active_episode_id = episodeId;
-                extraForm = fichaSectionForm(FICHA_FIRST_SECTION);
+                extraForm = await fichaGroupFormFilled(FICHA_FIRST_GROUP, mcp, session);
                 session.extracted_slots = {
                   ...(session.extracted_slots || {}),
                   mode: 'patient',
-                  form_state: { kind: 'ficha', section: FICHA_FIRST_SECTION },
+                  form_state: { kind: 'ficha' },
+                  ficha_done: [],
                   active_form: extraForm,
                 };
               }
@@ -508,6 +513,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             active_patient_id: session.active_patient_id,
             active_episode_id: session.active_episode_id,
             form: extraForm,
+            bookmarks: ((session.extracted_slots as any)?.form_state?.kind === 'ficha')
+              ? await fichaBookmarks(mcp, session) : undefined,
           });
         }
         if (confirmNo.test(message.trim())) {
@@ -556,6 +563,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             pending_action: session.pending_action,
             quick_replies: v1.quick_replies || [],
             form: (session.extracted_slots as any)?.active_form ?? null,
+            bookmarks: v1.bookmarks ?? (((session.extracted_slots as any)?.form_state?.kind === 'ficha')
+              ? await fichaBookmarks(mcp, session) : undefined),
           });
         }
       }

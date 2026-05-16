@@ -107,6 +107,30 @@
         </div>
       </div>
 
+      <nav
+        v-if="bookmarks.length"
+        ref="railEl"
+        class="bookmark-rail"
+        aria-label="Fichas"
+        @mouseenter="cacheRail"
+        @mousemove="onRailMove"
+        @mouseleave="onRailLeave"
+      >
+        <template v-for="(grp, gi) in bookmarkGroups" :key="'g' + gi">
+          <div v-if="grp.category" class="bookmark-cat">{{ grp.category }}</div>
+          <button
+            v-for="bm in grp.items"
+            :key="bm.id"
+            type="button"
+            class="bookmark-tab"
+            :class="{ done: bm.done === true }"
+            :disabled="busy"
+            :title="bm.label"
+            @click="openBookmark(bm)"
+          >{{ bm.label }}</button>
+        </template>
+      </nav>
+
       <div class="scroll-area" ref="feedEl" @scroll.passive="onScrollAreaScroll">
         <div class="inner">
           <div class="welcome">
@@ -148,14 +172,15 @@
             >{{ q.label }}</button>
           </div>
 
-          <BotForm
-            v-if="botForm && !busy"
-            :key="botForm.id"
-            :form="botForm"
-            :busy="busy"
-            @send="send"
-            @submit="onFormSubmit"
-          />
+          <div v-if="botForm && !busy" ref="botFormWrap">
+            <BotForm
+              :key="botForm.id"
+              :form="botForm"
+              :busy="busy"
+              @send="send"
+              @submit="onFormSubmit"
+            />
+          </div>
 
           <div v-if="pending" class="pending-card">
             <p class="pending-summary">{{ pending.summary }}</p>
@@ -258,6 +283,19 @@ const activeEpisode = ref(null);
 const pending = ref(null);
 const quickReplies = ref([]);
 const botForm = ref(null);
+const botFormWrap = ref(null);
+const bookmarks = ref([]);
+// Group bookmarks into ordered category sections. Bookmarks arrive already
+// ordered and grouped by category (consecutive), so a single pass suffices.
+const bookmarkGroups = computed(() => {
+  const out = [];
+  for (const bm of bookmarks.value) {
+    const last = out[out.length - 1];
+    if (last && last.category === (bm.category || '')) last.items.push(bm);
+    else out.push({ category: bm.category || '', items: [bm] });
+  }
+  return out;
+});
 const showFicha = ref(false);
 const fichaFrame = ref(null);
 const fichaEpisodes = ref([]);   // patient's episodes, most-recent first
@@ -404,6 +442,71 @@ const dxOptions = [
   { letra: 'C', cls: 'dx-c', title: 'C — rojo' },
 ];
 
+// Bookmark rail — Dock-style magnifier. Affects at most 5 elements (the one
+// under the cursor + 2 above + 2 below). Optimised: layout positions are
+// cached once per hover, and the DOM is only written when the centre changes.
+const railEl = ref(null);
+let railItems = [];          // [{ el, top, h }] — rest layout, cached once
+let railCenter = -1;         // index currently magnified as the centre
+const RAIL_SCALE = [2, 1.55, 1.22];   // centre, ±1, ±2
+const RAIL_PULL = [1, 0.5, 0.2];      // fraction of the tab pulled into view
+const RAIL_W = 40;                    // visible strip width (rail width, px)
+const RAIL_REST_MARGIN = 0;           // tabs share the rail height via flex
+
+function cacheRail() {
+  railItems = railEl.value
+    ? [...railEl.value.querySelectorAll('.bookmark-tab, .bookmark-cat')]
+        .map(el => ({ el, top: el.offsetTop, h: el.offsetHeight, w: el.offsetWidth }))
+    : [];
+  railCenter = -1;
+}
+
+// How far a tab at distance `d` from the centre must be pushed so the
+// magnified tabs don't overlap. Pure visual translate — never shifts layout,
+// so the cached rest positions stay exact and the centre is always correct.
+function railPush(h, d) {
+  const step = h + RAIL_REST_MARGIN;          // rest centre-to-centre spacing
+  let push = 0;
+  for (let k = 1; k <= d; k++) {
+    const needed = (h * (RAIL_SCALE[k - 1] + RAIL_SCALE[k])) / 2;
+    push += needed - step;
+  }
+  return push;
+}
+
+function onRailMove(e) {
+  if (!railEl.value) return;
+  if (!railItems.length) cacheRail();
+  const rect = railEl.value.getBoundingClientRect();   // one rect read per move
+  const y = e.clientY - rect.top;
+  let idx = railItems.findIndex(it => y >= it.top && y < it.top + it.h);
+  if (idx < 0) idx = y < 0 ? 0 : railItems.length - 1;
+  if (idx === railCenter) return;                      // cursor still in same tab
+  railCenter = idx;
+  railItems.forEach((it, i) => {
+    const d = i - idx;
+    const ad = Math.abs(d);
+    if (ad > 2) {
+      it.el.style.transform = '';
+      it.el.style.zIndex = '';
+      return;
+    }
+    const s = RAIL_SCALE[ad];
+    // Tabs rest right-aligned, tucked off the left edge. Pull them rightwards
+    // into view: the centre fully (just enough to read), neighbours partly.
+    const tx = Math.max(0, it.w - RAIL_W) * RAIL_PULL[ad];
+    const ty = ad === 0 ? 0 : Math.sign(d) * railPush(it.h, ad);
+    it.el.style.transform =
+      `translateX(${tx.toFixed(1)}px) translateY(${ty.toFixed(1)}px) scale(${s})`;
+    it.el.style.zIndex = String(30 - ad);
+  });
+}
+
+function onRailLeave() {
+  railItems.forEach(it => { it.el.style.transform = ''; it.el.style.zIndex = ''; });
+  railCenter = -1;
+}
+
 // Set the §5 diagnosis letter on the active episode (optimistic + persisted).
 function setDiagnostico(letra) {
   if (busy.value || !activeEpisode.value) return;
@@ -480,6 +583,7 @@ async function send(message, opts = {}) {
     // Only touch the form when the response explicitly carries one — other
     // turns leave it in place so it persists until filled.
     if (r && 'form' in r) botForm.value = r.form || null;
+    if (r && 'bookmarks' in r) bookmarks.value = Array.isArray(r.bookmarks) ? r.bookmarks : [];
     if (r?.download && r.download.content) {
       const blob = new Blob([r.download.content], { type: r.download.content_type || 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
@@ -507,12 +611,20 @@ async function send(message, opts = {}) {
       pending.value = null;
       quickReplies.value = [];
       botForm.value = null;
+      bookmarks.value = [];
       refreshSessions();
     }
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
     busy.value = false;
+    // Once the DOM has rendered the form (BotForm has v-if="botForm && !busy"),
+    // smooth-scroll it into view so a newly shown form (e.g. after clicking a
+    // bookmark) is visible without manual scrolling.
+    await nextTick();
+    if (botForm.value && botFormWrap.value) {
+      botFormWrap.value.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 }
 
@@ -596,6 +708,12 @@ function newSession() {
   pending.value = null;
   quickReplies.value = [];
   botForm.value = null;
+  bookmarks.value = [];
+}
+
+function openBookmark(bm) {
+  if (busy.value) return;
+  send('', { formSubmission: { form_id: 'ficha_goto', data: { group: bm.id } } });
 }
 
 async function refreshSessions() {
@@ -620,6 +738,7 @@ async function openSession(id) {
     pending.value       = s.pending_action     || null;
     quickReplies.value  = [];
     botForm.value       = s.form || null;   // restore the persisted form
+    bookmarks.value     = Array.isArray(s.bookmarks) ? s.bookmarks : [];
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
@@ -798,7 +917,72 @@ watch(sessionId, () => { refreshSessions(); });
   min-height: 0; overflow: hidden;
   transition: background 80ms ease;
   box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  position: relative;
 }
+
+/* Bookmark rail — fills the chat height exactly, no scroll. The 67 tabs +
+   category headers share the height via flex; the magnifier (JS) scales
+   the cursor's neighbourhood without shifting layout. */
+.bookmark-rail {
+  position: absolute;
+  left: 0;
+  top: 56px;
+  bottom: 4%;           /* taller rail → each tab ~20% taller */
+  z-index: 15;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;          /* tabs anchored to the right edge */
+  overflow: visible;
+}
+/* Tabs + category headers — equal slices of the rail height. */
+.bookmark-tab,
+.bookmark-cat {
+  box-sizing: border-box;
+  flex: 1 1 0;
+  min-height: 0;
+  width: max-content;
+  min-width: 40px;          /* never narrower than the rail strip */
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-top-width: 0;
+  border-radius: 0 4px 4px 0;
+  font-size: 0.34rem;
+  line-height: 1;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: right;
+  white-space: nowrap;
+  overflow: visible;
+  /* Rest: right-aligned, tucked off the left edge (only the right strip
+     shows). The magnifier pulls the cursor's neighbourhood into view. */
+  transform-origin: left center;
+  transition: background 0.12s, opacity 0.12s, transform 0.08s ease-out;
+}
+.bookmark-tab {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bookmark-cat {
+  background: #e4e8ec;
+  color: var(--accent);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.bookmark-tab:first-child,
+.bookmark-cat:first-child { border-top-width: 1px; }
+.bookmark-tab.done {
+  opacity: 0.35;
+}
+.bookmark-tab.done:hover:not(:disabled) {
+  opacity: 0.6;
+}
+.bookmark-tab:disabled { cursor: not-allowed; }
 .main.drag-over { background: #fff7ed; border-color: var(--accent); }
 
 /* Scrollable area: holds the centered "inner" wrapper.

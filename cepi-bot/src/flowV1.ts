@@ -57,6 +57,8 @@ export interface BotForm {
    */
   submit_mode?: 'message' | 'structured';
   actions?: BotFormAction[];
+  /** Pre-filled field values, keyed by field key. */
+  values?: Record<string, unknown>;
 }
 
 export interface FlowResponse {
@@ -65,6 +67,7 @@ export interface FlowResponse {
   /** present (form or null) ⇒ change the persisted active form; absent ⇒ keep it. */
   form?: BotForm | null;
   pending_action_set?: boolean;
+  bookmarks?: FichaBookmark[];
 }
 
 /**
@@ -108,18 +111,9 @@ const PATIENT_NEW_FORM: BotForm = {
   submit_send: '/nuevo-paciente {cedula} || {nombre} || {apellidos}',
 };
 
-// ── Ficha clínica (docs/ficha.html) — episode sections §3..§7 ──────────────
-// Each section is a structured BotForm; submitting it updates the episode.
-export type FichaSection = 's3' | 's4' | 's6' | 's7';
-export const FICHA_ORDER: FichaSection[] = ['s3', 's4', 's6', 's7'];
-export const FICHA_FIRST_SECTION: FichaSection = 's3';
-
-function nextFichaSection(s: FichaSection): FichaSection | null {
-  const i = FICHA_ORDER.indexOf(s);
-  return i >= 0 && i < FICHA_ORDER.length - 1 ? FICHA_ORDER[i + 1] : null;
-}
-
-const FICHA_SKIP: BotFormAction = { label: 'Omitir sección', send: 'omitir seccion' };
+// ── Ficha clínica (docs/ficha.html) — campos agrupados ─────────────────────
+// La ficha se recorre como grupos atómicos: un formulario por grupo, y cada
+// grupo es un "bookmark" en el riel lateral del chat.
 
 // Closed yes/no question rendered as a single radio (not an ambiguous checkbox).
 const SI_NO: Array<{ label: string; value: boolean }> = [
@@ -127,108 +121,207 @@ const SI_NO: Array<{ label: string; value: boolean }> = [
   { label: 'No', value: false },
 ];
 
-const FICHA_FORMS: Record<FichaSection, BotForm> = {
-  s3: {
-    id: 'ficha_s3',
-    title: '§3 Anamnesis',
-    submit_mode: 'structured',
-    submit_label: 'Guardar y seguir',
-    actions: [FICHA_SKIP],
-    fields: [
-      { key: 'motivo_consulta', label: 'Motivo de consulta', type: 'textarea' },
-      { key: 'tiempo_evolucion', label: 'Tiempo de evolución', type: 'text', placeholder: 'días, semanas, meses, años' },
-      { key: 'curso', label: 'Curso', type: 'radio', options: ['progresivo', 'regresivo', 'continuo', 'intermitente'] },
-      { key: 'sintomas_presente', label: '¿Presenta síntomas?', type: 'radio', options: SI_NO },
-      { key: 'picor', label: 'Picor (+)', type: 'text' },
-      { key: 'dolor', label: 'Dolor (+)', type: 'text' },
-      { key: 'causa_aparente_presente', label: '¿Causa aparente?', type: 'radio', options: SI_NO },
-      { key: 'causa_aparente', label: 'Detalle causa aparente', type: 'text' },
-      { key: 'patologia_asociada_presente', label: '¿Patología asociada / RAS?', type: 'radio', options: SI_NO },
-      { key: 'patologia_asociada', label: 'Detalle patología asociada', type: 'text' },
-      { key: 'tratamientos_previos_presente', label: '¿Tratamientos previos?', type: 'radio', options: SI_NO },
-      { key: 'tratamientos_previos', label: 'Detalle tratamientos previos', type: 'text' },
-      { key: 'anamnesis', label: 'Anamnesis (notas)', type: 'textarea' },
-    ],
-  },
-  s4: {
-    id: 'ficha_s4',
-    title: '§4 Examen físico',
-    submit_mode: 'structured',
-    submit_label: 'Guardar y seguir',
-    actions: [FICHA_SKIP],
-    fields: [
-      { type: 'heading', label: '4.1 Lesión elemental' },
-      { key: 'lesion_macula', label: 'Mácula', type: 'checkbox' },
-      { key: 'lesion_papula', label: 'Pápula', type: 'checkbox' },
-      { key: 'lesion_placa', label: 'Placa', type: 'checkbox' },
-      { key: 'lesion_vesicula', label: 'Vesícula', type: 'checkbox' },
-      { key: 'lesion_ampolla', label: 'Ampolla', type: 'checkbox' },
-      { key: 'lesion_tumor', label: 'Tumor', type: 'checkbox' },
-      { key: 'lesion_nodulo', label: 'Nódulo', type: 'checkbox' },
-      { key: 'lesion_ulcera', label: 'Úlcera', type: 'checkbox' },
-      { key: 'lesion_otra', label: 'Otra lesión', type: 'text' },
-      { type: 'heading', label: '4.2 Características individuales (+)' },
-      { key: 'caract_eritema', label: 'Eritema', type: 'text' },
-      { key: 'caract_descamacion', label: 'Descamación', type: 'text' },
-      { key: 'caract_exudacion', label: 'Exudación', type: 'text' },
-      { key: 'caract_liquenificacion', label: 'Liquenificación', type: 'text' },
-      { key: 'caract_otra', label: 'Otra característica', type: 'text' },
-      { type: 'heading', label: '4.3 Características topográficas' },
-      { key: 'topo_unica', label: 'Única', type: 'checkbox' },
-      { key: 'topo_multiples', label: 'Múltiples', type: 'checkbox' },
-      { key: 'topo_bilateral', label: 'Bilateral', type: 'checkbox' },
-      { key: 'topo_simetrico', label: 'Simétrico', type: 'checkbox' },
-      { key: 'topo_confluente', label: 'Confluente', type: 'checkbox' },
-      { key: 'topo_agrupadas', label: 'Agrupadas', type: 'checkbox' },
-      { key: 'topo_circular', label: 'Circular', type: 'checkbox' },
-      { key: 'topo_lineal', label: 'Lineal', type: 'checkbox' },
-      { key: 'topo_borde', label: 'Borde', type: 'checkbox' },
-      { key: 'topo_otra', label: 'Otra topografía', type: 'text' },
-      { type: 'heading', label: '4.4 Gravedad (0–3)' },
-      { key: 'gravedad_extension', label: 'Extensión', type: 'radio', options: ['0', '1', '2', '3'] },
-      { key: 'gravedad_intensidad', label: 'Intensidad', type: 'radio', options: ['0', '1', '2', '3'] },
-      { key: 'gravedad_funcionalidad', label: 'Funcionalidad', type: 'radio', options: ['0', '1', '2', '3'] },
-      { type: 'heading', label: '4.5 Patrón' },
-      { key: 'patron_inflam_epidermica', label: 'Inflamación epidérmica', type: 'checkbox' },
-      { key: 'patron_inflam_dermica', label: 'Inflamación dérmica', type: 'checkbox' },
-      { key: 'patron_necrosis', label: 'Necrosis', type: 'checkbox' },
-      { key: 'patron_tumor', label: 'Tumor', type: 'checkbox' },
-      { key: 'patron_color', label: 'Color', type: 'checkbox' },
-      { key: 'notas_examen', label: 'Notas del examen', type: 'textarea' },
-    ],
-  },
-  s6: {
-    id: 'ficha_s6',
-    title: '§6 Estudios complementarios',
-    submit_mode: 'structured',
-    submit_label: 'Guardar y seguir',
-    actions: [FICHA_SKIP],
-    fields: [
-      { key: 'estudios_complementarios_presente', label: '¿Tiene estudios complementarios?', type: 'radio', options: SI_NO },
-      { key: 'estudios_complementarios_resumen', label: 'Resumen de estudios', type: 'textarea' },
-    ],
-  },
-  s7: {
-    id: 'ficha_s7',
-    title: '§7 Tratamiento y plan',
-    submit_mode: 'structured',
-    submit_label: 'Finalizar consulta',
-    actions: [FICHA_SKIP],
-    fields: [
-      { key: 'tratamiento_resumen', label: 'Tratamiento', type: 'textarea' },
-      { key: 'plan', label: 'Plan', type: 'textarea' },
-      { key: 'proximo_control_fecha', label: 'Próximo control', type: 'text', placeholder: 'YYYY-MM-DD' },
-      { key: 'proximo_control_motivo', label: 'Motivo del próximo control', type: 'text' },
-    ],
-  },
-};
-
-/** The BotForm for a ficha section (used by server.ts and the flow). */
-export function fichaSectionForm(section: FichaSection): BotForm {
-  return FICHA_FORMS[section];
+export interface FichaGroup {
+  id: string;
+  label: string;
+  category: string;
+  target: 'patient' | 'episode';
+  fields: BotFormField[];
 }
 
-// Key routing for a full-ficha "Guardar": §1–§2 → paciente, §3–§7 → episodio.
+interface FichaFieldDef {
+  category: string;
+  target: 'patient' | 'episode';
+  field: BotFormField;
+}
+
+// Todos los campos de la ficha, en orden — un bookmark / un formulario
+// atómico por campo (una pregunta por formulario), agrupados por categoría.
+const FICHA_FIELD_DEFS: FichaFieldDef[] = [
+  // §1 Filiación (paciente)
+  { category: 'Filiación', target: 'patient', field: { key: 'direccion', label: 'Dirección', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'telefono', label: 'Teléfono', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'sector_ciudad', label: 'Sector / Ciudad', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'ocupacion', label: 'Ocupación', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'email', label: 'Correo', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'sexo', label: 'Sexo', type: 'radio', options: ['M', 'F', 'Otro'] } },
+  { category: 'Filiación', target: 'patient', field: { key: 'etnia', label: 'Etnia', type: 'radio', options: ['mestiza', 'blanco', 'afro', 'otra'] } },
+  { category: 'Filiación', target: 'patient', field: { key: 'escolaridad_grado', label: 'Escolaridad (grado)', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'condicion_socioeconomica', label: 'Condición socioeconómica', type: 'radio', options: ['alto', 'medio', 'bajo'] } },
+  // §2 Antecedentes (paciente)
+  { category: 'Antecedentes', target: 'patient', field: { key: 'antecedentes_personales_presente', label: '¿Antecedentes personales?', type: 'radio', options: SI_NO } },
+  { category: 'Antecedentes', target: 'patient', field: { key: 'antecedentes_personales', label: 'Detalle antecedentes personales', type: 'textarea' } },
+  { category: 'Antecedentes', target: 'patient', field: { key: 'antecedentes_familiares_presente', label: '¿Antecedentes familiares?', type: 'radio', options: SI_NO } },
+  { category: 'Antecedentes', target: 'patient', field: { key: 'antecedentes_familiares', label: 'Detalle antecedentes familiares', type: 'textarea' } },
+  // §3 Anamnesis (episodio)
+  ...([
+  { key: 'motivo_consulta', label: 'Motivo de consulta', type: 'textarea' },
+  { key: 'tiempo_evolucion', label: 'Tiempo de evolución', type: 'text', placeholder: 'días, semanas, meses, años' },
+  { key: 'curso', label: 'Curso', type: 'radio', options: ['progresivo', 'regresivo', 'continuo', 'intermitente'] },
+  { key: 'sintomas_presente', label: '¿Presenta síntomas?', type: 'radio', options: SI_NO },
+  { key: 'picor', label: 'Picor', type: 'radio', options: ['leve', 'moderado', 'severo'] },
+  { key: 'dolor', label: 'Dolor', type: 'radio', options: ['leve', 'moderado', 'severo'] },
+  { key: 'causa_aparente_presente', label: '¿Causa aparente?', type: 'radio', options: SI_NO },
+  { key: 'causa_aparente', label: 'Detalle causa aparente', type: 'text' },
+  { key: 'patologia_asociada_presente', label: '¿Patología asociada / RAS?', type: 'radio', options: SI_NO },
+  { key: 'patologia_asociada', label: 'Detalle patología asociada', type: 'text' },
+  { key: 'tratamientos_previos_presente', label: '¿Tratamientos previos?', type: 'radio', options: SI_NO },
+  { key: 'tratamientos_previos', label: 'Detalle tratamientos previos', type: 'text' },
+  { key: 'anamnesis', label: 'Anamnesis (notas)', type: 'textarea' },
+  ] as BotFormField[]).map(field => ({ category: 'Anamnesis', target: 'episode' as const, field })),
+  // §4 Examen físico (episodio)
+  ...([
+  // §4.1 Lesión elemental
+  { key: 'lesion_macula', label: 'Lesión: Mácula', type: 'radio', options: SI_NO },
+  { key: 'lesion_papula', label: 'Lesión: Pápula', type: 'radio', options: SI_NO },
+  { key: 'lesion_placa', label: 'Lesión: Placa', type: 'radio', options: SI_NO },
+  { key: 'lesion_vesicula', label: 'Lesión: Vesícula', type: 'radio', options: SI_NO },
+  { key: 'lesion_ampolla', label: 'Lesión: Ampolla', type: 'radio', options: SI_NO },
+  { key: 'lesion_tumor', label: 'Lesión: Tumor', type: 'radio', options: SI_NO },
+  { key: 'lesion_nodulo', label: 'Lesión: Nódulo', type: 'radio', options: SI_NO },
+  { key: 'lesion_ulcera', label: 'Lesión: Úlcera', type: 'radio', options: SI_NO },
+  { key: 'lesion_otra', label: 'Lesión: Otra', type: 'text' },
+  // §4.2 Características
+  { key: 'caract_eritema', label: 'Caract.: Eritema', type: 'text' },
+  { key: 'caract_descamacion', label: 'Caract.: Descamación', type: 'text' },
+  { key: 'caract_exudacion', label: 'Caract.: Exudación', type: 'text' },
+  { key: 'caract_liquenificacion', label: 'Caract.: Liquenificación', type: 'text' },
+  { key: 'caract_otra', label: 'Caract.: Otra', type: 'text' },
+  // §4.3 Topografía
+  { key: 'topo_unica', label: 'Topo.: Única', type: 'radio', options: SI_NO },
+  { key: 'topo_multiples', label: 'Topo.: Múltiples', type: 'radio', options: SI_NO },
+  { key: 'topo_bilateral', label: 'Topo.: Bilateral', type: 'radio', options: SI_NO },
+  { key: 'topo_simetrico', label: 'Topo.: Simétrico', type: 'radio', options: SI_NO },
+  { key: 'topo_confluente', label: 'Topo.: Confluente', type: 'radio', options: SI_NO },
+  { key: 'topo_agrupadas', label: 'Topo.: Agrupadas', type: 'radio', options: SI_NO },
+  { key: 'topo_circular', label: 'Topo.: Circular', type: 'radio', options: SI_NO },
+  { key: 'topo_lineal', label: 'Topo.: Lineal', type: 'radio', options: SI_NO },
+  { key: 'topo_borde', label: 'Topo.: Borde', type: 'radio', options: SI_NO },
+  { key: 'topo_otra', label: 'Topo.: Otra', type: 'text' },
+  // §4.4 Gravedad
+  { key: 'gravedad_extension', label: 'Gravedad: Extensión (0-3)', type: 'radio', options: ['0', '1', '2', '3'] },
+  { key: 'gravedad_intensidad', label: 'Gravedad: Intensidad (0-3)', type: 'radio', options: ['0', '1', '2', '3'] },
+  { key: 'gravedad_funcionalidad', label: 'Gravedad: Funcionalidad (0-3)', type: 'radio', options: ['0', '1', '2', '3'] },
+  // §4.5 Patrón
+  { key: 'patron_inflam_epidermica', label: 'Patrón: Inflam. epidérmica', type: 'radio', options: SI_NO },
+  { key: 'patron_inflam_dermica', label: 'Patrón: Inflam. dérmica', type: 'radio', options: SI_NO },
+  { key: 'patron_necrosis', label: 'Patrón: Necrosis', type: 'radio', options: SI_NO },
+  { key: 'patron_tumor', label: 'Patrón: Tumor', type: 'radio', options: SI_NO },
+  { key: 'patron_color', label: 'Patrón: Color', type: 'radio', options: SI_NO },
+  { key: 'notas_examen', label: 'Notas del examen', type: 'textarea' },
+  ] as BotFormField[]).map(field => ({ category: 'Examen físico', target: 'episode' as const, field })),
+  // §5 Diagnóstico (episodio)
+  ...([
+  { key: 'diagnostico', label: 'Diagnóstico', type: 'text' },
+  { key: 'diagnostico_letra', label: 'Semáforo A/B/C', type: 'radio', options: ['A', 'B', 'C'] },
+  ] as BotFormField[]).map(field => ({ category: 'Diagnóstico', target: 'episode' as const, field })),
+  // §6 Estudios (episodio)
+  ...([
+  { key: 'estudios_complementarios_presente', label: '¿Estudios complementarios?', type: 'radio', options: SI_NO },
+  { key: 'estudios_complementarios_resumen', label: 'Resumen de estudios', type: 'textarea' },
+  ] as BotFormField[]).map(field => ({ category: 'Estudios', target: 'episode' as const, field })),
+  // §7 Tratamiento y plan (episodio)
+  ...([
+  { key: 'tratamiento_resumen', label: 'Tratamiento', type: 'textarea' },
+  { key: 'plan', label: 'Plan', type: 'textarea' },
+  { key: 'proximo_control_fecha', label: 'Próximo control', type: 'text', placeholder: 'YYYY-MM-DD' },
+  { key: 'proximo_control_motivo', label: 'Motivo del próximo control', type: 'text' },
+  ] as BotFormField[]).map(field => ({ category: 'Tratamiento', target: 'episode' as const, field })),
+];
+
+/** Cada campo de la ficha es su propio grupo → su bookmark + formulario atómico. */
+export const FICHA_GROUPS: FichaGroup[] = FICHA_FIELD_DEFS.map(d => ({
+  id: d.field.key as string,
+  label: d.field.label,
+  category: d.category,
+  target: d.target,
+  fields: [d.field],
+}));
+
+export const FICHA_FIRST_GROUP = FICHA_GROUPS[0].id;
+
+/** The atomic BotForm for one ficha group (one form per bookmark). */
+export function fichaGroupForm(id: string): BotForm | null {
+  const g = FICHA_GROUPS.find(x => x.id === id);
+  if (!g) return null;
+  return {
+    id: 'ficha_grp_' + g.id,
+    title: g.label,
+    submit_mode: 'structured',
+    submit_label: 'Guardar',
+    fields: g.fields,
+    actions: [{ label: 'Omitir', send: 'omitir ficha' }],
+  };
+}
+
+/**
+ * Same as fichaGroupForm, but pre-filled with the field's current value from
+ * the target entity (patient or episode) so revisiting a bookmark shows what
+ * was already entered.
+ */
+export async function fichaGroupFormFilled(
+  id: string, mcp: TodoErpMcpClient, session: BotSession,
+): Promise<BotForm | null> {
+  const form = fichaGroupForm(id);
+  const g = FICHA_GROUPS.find(x => x.id === id);
+  if (!form || !g) return form;
+  const entityId = g.target === 'patient'
+    ? session.active_patient_id : session.active_episode_id;
+  if (!entityId) return form;
+  try {
+    const r = await mcp.call('entities.get', { id: entityId });
+    const data = ((r as any)?.data?.data) || {};
+    const values: Record<string, unknown> = {};
+    for (const f of g.fields) {
+      if (f.key && data[f.key] !== undefined && data[f.key] !== null && data[f.key] !== '') {
+        values[f.key] = data[f.key];
+      }
+    }
+    if (Object.keys(values).length) form.values = values;
+  } catch { /* no prefill */ }
+  return form;
+}
+
+/** The group shown after `id` in ficha order (or null if it was the last). */
+export function nextFichaGroupId(id: string): string | null {
+  const i = FICHA_GROUPS.findIndex(g => g.id === id);
+  return i >= 0 && i < FICHA_GROUPS.length - 1 ? FICHA_GROUPS[i + 1].id : null;
+}
+
+export interface FichaBookmark { id: string; label: string; category: string; done: boolean; }
+
+/**
+ * The bookmark rail: every ficha group + whether its field actually holds a
+ * value on the target entity (patient or episode), regardless of whether it
+ * was submitted in this session.
+ */
+export async function fichaBookmarks(
+  mcp: TodoErpMcpClient, session: BotSession,
+): Promise<FichaBookmark[]> {
+  let patientData: Record<string, unknown> = {};
+  let episodeData: Record<string, unknown> = {};
+  if (session.active_patient_id) {
+    try {
+      const pr = await mcp.call('entities.get', { id: session.active_patient_id });
+      patientData = ((pr as any)?.data?.data) || {};
+    } catch { patientData = {}; }
+  }
+  if (session.active_episode_id) {
+    try {
+      const er = await mcp.call('entities.get', { id: session.active_episode_id });
+      episodeData = ((er as any)?.data?.data) || {};
+    } catch { episodeData = {}; }
+  }
+  return FICHA_GROUPS.map(g => {
+    const src = g.target === 'patient' ? patientData : episodeData;
+    const key = g.fields[0].key as string;
+    const v = src[key];
+    const done = v !== undefined && v !== null && v !== '';
+    return { id: g.id, label: g.label, category: g.category, done };
+  });
+}
+
+// Key routing for a full-ficha "Guardar": §1–§2 → paciente, resto → episodio.
 // Identity fields (nombre/apellidos/cedula) are intentionally excluded.
 const FICHA_PATIENT_KEYS = new Set<string>([
   'direccion', 'telefono', 'sector_ciudad', 'ocupacion', 'email', 'edad',
@@ -238,10 +331,9 @@ const FICHA_PATIENT_KEYS = new Set<string>([
   'antecedentes_familiares_presente',
 ]);
 const FICHA_EPISODE_KEYS = new Set<string>([
-  ...FICHA_ORDER.flatMap(s =>
-    FICHA_FORMS[s].fields.map(f => f.key).filter((k): k is string => !!k)),
-  'ficha_num', 'examinador_nombre', 'diagnostico', 'diagnostico_letra',
-  'regiones_afectadas',
+  ...FICHA_GROUPS.flatMap(g =>
+    g.fields.map(f => f.key).filter((k): k is string => !!k)),
+  'gravedad_total', 'ficha_num', 'examinador_nombre', 'regiones_afectadas',
 ]);
 
 /** Traffic-light label for a §5 diagnosis letter. */
@@ -463,73 +555,99 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
     };
   }
 
-  // ── patient mode WITH active patient: ficha clínica section flow ──
-  // After the patient is activated and an episode opened (server.ts), the bot
-  // walks the ficha section by section. Each section is a structured BotForm;
-  // submitting it merges the data into the episode via entities.update.
-  if (mode === 'patient' && session.active_patient_id) {
-    const fs = (session.extracted_slots as any)?.form_state as
-      | { kind: 'ficha'; section: FichaSection }
-      | undefined;
+  // ── patient mode WITH active patient: ficha clínica group flow ──
+  // The ficha is walked as atomic groups: one structured BotForm per group,
+  // each group a bookmark in the chat's left rail. Submitting a group form
+  // merges its data into the active episode via entities.update.
+  if ((session.extracted_slots as any)?.form_state?.kind === 'ficha') {
+    const sub = ctx.formSubmission;
+    const current: string =
+      ((session.extracted_slots as any)?.ficha_current as string) || FICHA_GROUPS[0].id;
 
-    if (fs?.kind === 'ficha') {
-      const section: FichaSection = fs.section || 's3';
-      const sub = ctx.formSubmission;
-      const isSubmit = !!sub && typeof sub.form_id === 'string'
-        && sub.form_id.startsWith('ficha_s');
-      const isSkip = /^\s*\/?\s*omitir(\s+secci[oó]n)?\s*$/i.test(trimmed);
-
-      if (isSubmit || isSkip) {
-        const title = FICHA_FORMS[section].title;
-        const userMsg = isSkip ? 'Omitir sección' : `📋 ${title} enviada`;
-        let savedNote = `${title} omitida.`;
-
-        if (isSubmit && session.active_episode_id) {
-          const data: Record<string, unknown> = { ...(sub!.data || {}) };
-          // §4 — gravedad fields are numeric; radio values arrive as strings.
-          if (section === 's4') {
-            const gKeys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
-            for (const k of gKeys) {
-              if (data[k] != null && data[k] !== '') data[k] = Number(data[k]);
-            }
-            if (gKeys.some(k => data[k] != null)) {
-              data.gravedad_total = gKeys.reduce((a, k) => a + (Number(data[k]) || 0), 0);
-            }
-          }
-          if (Object.keys(data).length) {
-            const upd = await mcp.call('entities.update', {
-              id: session.active_episode_id,
-              record_type: 'business',
-              data,
-            });
-            if (!(upd as any)?.ok) {
-              const text = `No pude guardar ${title}: ${(upd as any)?.error || 'error desconocido'}.\n` +
-                `Revisá los datos y volvé a enviar.`;
-              await appendAndSave(session, userMsg, text, mcp);
-              return { text, form: FICHA_FORMS[section] };
-            }
-          }
-          savedNote = `${title} guardada.`;
-        }
-
-        const next = nextFichaSection(section);
-        if (next) {
-          setSlot(session, 'form_state', { kind: 'ficha', section: next });
-          const text = `${savedNote} Continuemos con ${FICHA_FORMS[next].title}.`;
-          await appendAndSave(session, userMsg, text, mcp);
-          return { text, form: FICHA_FORMS[next] };
-        }
-        clearSlot(session, 'form_state');
-        const text = `${savedNote}\n\nLa ficha de la consulta quedó registrada. ¿Algo más?`;
-        await appendAndSave(session, userMsg, text, mcp);
-        return { text, form: null };   // ficha done — clear the persisted form
+    // Jump to a group via the bookmark rail.
+    if (sub?.form_id === 'ficha_goto') {
+      const group = String(sub.data?.group);
+      const form = await fichaGroupFormFilled(group, mcp, session);
+      if (form) {
+        setSlot(session, 'ficha_current', group);
+        await appendAndSave(session, message, `${form.title}:`, mcp);
+        return { text: `${form.title}:`, form, bookmarks: await fichaBookmarks(mcp, session) };
       }
-
-      // Free text while a ficha section is open — re-show the current section.
-      const text = `Completá la sección ${FICHA_FORMS[section].title}, o tocá "Omitir sección".`;
-      await appendAndSave(session, message, text, mcp);
-      return { text, form: FICHA_FORMS[section] };
     }
+
+    // "Omitir" — skip the current form, move to the next one (nothing saved).
+    if (/^\s*\/?\s*omitir(\s+ficha)?\s*$/i.test(trimmed)) {
+      const nid = nextFichaGroupId(current);
+      if (nid) {
+        const form = (await fichaGroupFormFilled(nid, mcp, session))!;
+        setSlot(session, 'ficha_current', nid);
+        const text = `Omitido. Siguiente: ${form.title}.`;
+        await appendAndSave(session, 'Omitir', text, mcp);
+        return { text, form, bookmarks: await fichaBookmarks(mcp, session) };
+      }
+      const text = 'Última sección. Revisá lo que falte desde los marcadores.';
+      await appendAndSave(session, 'Omitir', text, mcp);
+      return { text, form: null, bookmarks: await fichaBookmarks(mcp, session) };
+    }
+
+    // Submit a group form.
+    if (typeof sub?.form_id === 'string' && sub.form_id.startsWith('ficha_grp_')) {
+      const gid = sub.form_id.slice('ficha_grp_'.length);
+      const grp = FICHA_GROUPS.find(g => g.id === gid);
+      const data: Record<string, unknown> = { ...(sub.data || {}) };
+      const isPatient = grp?.target === 'patient';
+      const targetId = isPatient ? session.active_patient_id : session.active_episode_id;
+      if (!isPatient) {
+        const gKeys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
+        for (const k of gKeys) {
+          if (data[k] != null && data[k] !== '') data[k] = Number(data[k]);
+        }
+        // Forms are atomic (one field each), so a single submit never carries
+        // all three gravedad fields — re-derive the total from the episode.
+        if (gKeys.some(k => data[k] != null) && session.active_episode_id) {
+          try {
+            const er = await mcp.call('entities.get', { id: session.active_episode_id });
+            const cur = ((er as any)?.data?.data) || {};
+            data.gravedad_total = gKeys.reduce(
+              (a, k) => a + (Number(data[k] ?? cur[k]) || 0), 0);
+          } catch { /* skip total */ }
+        }
+      }
+      if (targetId && Object.keys(data).length) {
+        const upd = await mcp.call('entities.update', {
+          id: targetId, record_type: 'business', data,
+        });
+        if (!(upd as any)?.ok) {
+          const text = `No pude guardar: ${(upd as any)?.error || 'error desconocido'}.\n` +
+            `Revisá los datos y volvé a enviar.`;
+          await appendAndSave(session, message, text, mcp);
+          return { text, form: await fichaGroupFormFilled(gid, mcp, session), bookmarks: await fichaBookmarks(mcp, session) };
+        }
+        if (isPatient) {
+          try {
+            const pr = await mcp.call('entities.get', { id: session.active_patient_id! });
+            const pd = ((pr as any)?.data?.data) || {};
+            setSlot(session, 'patient_context', { id: session.active_patient_id, ...pd });
+          } catch { /* skip refresh */ }
+        }
+      }
+      const done: string[] = ((session.extracted_slots as any)?.ficha_done as string[]) || [];
+      if (!done.includes(gid)) done.push(gid);
+      setSlot(session, 'ficha_done', done);
+      const nid = nextFichaGroupId(gid);
+      if (nid) {
+        const form = (await fichaGroupFormFilled(nid, mcp, session))!;
+        setSlot(session, 'ficha_current', nid);
+        const text = `Guardado. Siguiente: ${form.title}.`;
+        await appendAndSave(session, message, text, mcp);
+        return { text, form, bookmarks: await fichaBookmarks(mcp, session) };
+      }
+      const text = 'Ficha completa. Podés revisar cualquier sección desde los marcadores.';
+      await appendAndSave(session, message, text, mcp);
+      return { text, form: null, bookmarks: await fichaBookmarks(mcp, session) };
+    }
+
+    // Free text while the ficha is open — fall through to the rest of the pipeline.
   }
 
   // ── patient_info mode WITH active patient: answer questions about the

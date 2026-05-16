@@ -208,10 +208,13 @@
     display: flex; align-items: center; gap: 8px; margin-top: 8px;
   }
   .grav-total .box {
-    background: #d6cfc6; border: 1px solid #555; padding: 2px 12px;
-    min-width: 50px; text-align: center;
+    background: #d6cfc6; border: 1px solid #555; padding: 2px 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 3px; white-space: nowrap;
   }
+  .grav-total .box input { padding: 0 !important; margin: 0; }
   .grav-total .legend { font-size: 8.5pt; color: #555; font-style: italic; line-height: 1.4; }
+  .grav-class { font-weight: 700; color: #0a3a6b; margin-left: 2px; }
 
   /* ---------- §2 antecedentes (split textarea) ---------- */
   .anamnesis-grid { display: grid; grid-template-columns: 60fr 40fr; gap: 0 18px; }
@@ -416,8 +419,8 @@
               <label><input type="checkbox" name="sintomas_presente_no"> No</label>
             </div>
             <div class="sintomas-right">
-              <div class="caract-item"><span>Picor (+):</span><input type="text" name="picor"></div>
-              <div class="caract-item"><span>Dolor (+):</span><input type="text" name="dolor"></div>
+              <div class="caract-item"><span>Picor:</span><select name="picor"><option value=""></option><option value="leve">leve</option><option value="moderado">moderado</option><option value="severo">severo</option></select></div>
+              <div class="caract-item"><span>Dolor:</span><select name="dolor"><option value=""></option><option value="leve">leve</option><option value="moderado">moderado</option><option value="severo">severo</option></select></div>
             </div>
           </div>
         </div>
@@ -581,7 +584,11 @@
           </table>
           <div class="grav-total">
             <span>E+I+F =</span>
-            <span class="box"><input type="number" name="gravedad_total" min="0" max="9" style="border:none; width:40px; text-align:center; color:#000;"></span>
+            <span class="box">
+              <input type="number" name="gravedad_total" min="0" max="9" readonly
+                     style="border:none; width:26px; text-align:center; color:#000; font-weight:700;">
+              <span id="grav-class" class="grav-class"></span>
+            </span>
             <span>/9</span>
             <div class="legend">
               0 - 3 = Leve<br>
@@ -709,6 +716,7 @@ function fillFicha(data) {
       default: set(k, v);
     }
   }
+  if (window.recalcGravedad) window.recalcGravedad();
 }
 
 /* Lectura inversa: recompone el formulario al schema de las entities
@@ -833,6 +841,30 @@ function markChanges(keys) {
     if (lbl) lbl.classList.add('lbl-changed');
   });
 }
+
+/* §4.4 Gravedad — total autocalculado (E+I+F) + clasificación. */
+(function gravedadCalc() {
+  const form = document.getElementById('ficha-aps');
+  if (!form) return;
+  const keys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
+  const totalEl = form.elements['gravedad_total'];
+  const classEl = document.getElementById('grav-class');
+  function recalc() {
+    let any = false, sum = 0;
+    keys.forEach(k => {
+      const v = form.elements[k] && form.elements[k].value;
+      if (v !== '' && v != null) { any = true; sum += Number(v) || 0; }
+    });
+    if (!any) { totalEl.value = ''; if (classEl) classEl.textContent = ''; return; }
+    totalEl.value = sum;
+    if (classEl) classEl.textContent = sum <= 3 ? 'Leve' : sum <= 6 ? 'Moderada' : 'Grave';
+  }
+  keys.forEach(k => {
+    [...(form.elements[k] || [])].forEach(r => r.addEventListener('change', recalc));
+  });
+  window.recalcGravedad = recalc;
+  recalc();
+})();
 
 window.fillFicha = fillFicha;
 window.readFicha = readFicha;

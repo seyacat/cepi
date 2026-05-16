@@ -241,3 +241,28 @@ exportar [anonimizado]   → descarga JSON
   la app — se acumulan; conviene un TRUNCATE explícito de tablas tipadas.
 - Bot proactivo con formularios dinámicos generados por LLM: planificado,
   no implementado.
+
+### Ficha atómica + riel de bookmarks (continuación)
+
+- La ficha se recorre como **grupos atómicos**: un campo = un formulario =
+  un bookmark (`FICHA_FIELD_DEFS` → `FICHA_GROUPS` en `flowV1.ts`).
+- **Riel de bookmarks** (`Chat.vue`) en el borde izquierdo del chat:
+  - Agrupados por categoría (Filiación, Antecedentes, Anamnesis, Examen
+    físico, Diagnóstico, Estudios, Tratamiento) con headers separadores.
+  - Efecto **lupa** tipo Dock: el cursor agranda hasta 5 elementos
+    (centro ±2); posiciones cacheadas, sólo se redibuja al cambiar de centro.
+  - En reposo: tabs chicos, anclados a la derecha, metidos fuera del borde
+    izquierdo; ancho = largo del texto (`min-width` = ancho del riel).
+  - Completado (campo con valor) → transparente.
+- Formularios cerrados (radio): seleccionar envía y avanza, sin botón Guardar.
+  Botón **Omitir** en cada formulario. Formularios abiertos conservan Guardar.
+- Al abrir un bookmark, el formulario llega **prellenado** con el valor
+  actual del campo (`fichaGroupFormFilled`).
+- `fichaBookmarks` calcula "completado" leyendo el valor real en la entidad
+  (paciente/episodio), no sólo lo enviado en la sesión.
+- Campos del paciente (§1-§2) se guardan en el paciente; §3-§7 en el episodio.
+- `picor` / `dolor` pasaron a picklist (leve/moderado/severo) — definición,
+  form_config y `ficha.html` actualizados.
+- Ficha §4.4: `gravedad_total` (E+I+F) autocalculado, mostrado como
+  "<n> Leve|Moderada|Grave".
+- §5 Diagnóstico: autocompletado contra ICD-11 (OMS) en `ficha.html`.

@@ -23,6 +23,7 @@
               :value="opt.value"
               v-model="values[f.key]"
               :disabled="busy"
+              @change="onRadioPick"
             />
             <span>{{ opt.label }}</span>
           </label>
@@ -67,7 +68,7 @@
 
     <div class="bot-form-actions">
       <button
-        v-if="form.submit_send || form.submit_mode === 'structured'"
+        v-if="(form.submit_send || form.submit_mode === 'structured') && !autoSubmit"
         type="submit"
         class="bf-submit"
         :disabled="busy || !canSubmit"
@@ -100,8 +101,14 @@ const DATA_FIELDS = (props.form.fields || []).filter(
   f => f.key && f.type !== 'heading' && f.type !== 'entity_search',
 );
 
+// Initialise from form.values (pre-filled on revisit), else field default.
+const initial = props.form.values || {};
 const values = reactive(
-  Object.fromEntries(DATA_FIELDS.map(f => [f.key, f.type === 'checkbox' ? false : ''])),
+  Object.fromEntries(DATA_FIELDS.map(f => {
+    const def = f.type === 'checkbox' ? false : '';
+    const v = initial[f.key];
+    return [f.key, v !== undefined && v !== null ? v : def];
+  })),
 );
 
 function normOptions(f) {
@@ -111,6 +118,17 @@ function normOptions(f) {
 }
 
 const isStructured = computed(() => props.form.submit_mode === 'structured');
+
+// A "closed" form — every field is a single-choice radio. Picking an option
+// submits immediately (no Guardar button).
+const autoSubmit = computed(() =>
+  isStructured.value && DATA_FIELDS.length > 0 &&
+  DATA_FIELDS.every(f => f.type === 'radio'),
+);
+
+function onRadioPick() {
+  if (autoSubmit.value && !props.busy) onSubmit();
+}
 
 // Structured forms (ficha sections) can always be submitted — every field is
 // optional. Message-template forms need their required fields filled.
