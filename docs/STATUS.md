@@ -359,3 +359,21 @@ exportar [anonimizado]   → descarga JSON
   `filter: { episode_id }` (match exacto de columna), no `search` (texto
   libre, que no matchea UUIDs). Corregido también en `sugerir diagnostico`
   y `casos similares`.
+
+### Sección BLINK (cribado de malignidad)
+
+- Nueva sección **BLINK** en la ficha, **antes de §4 Examen físico**: grupo
+  `g_blink` en `FICHA_GROUP_SPEC`, bookmark con label **"BLINK"**.
+- Un **único formulario** con las 5 preguntas del algoritmo BLINK
+  (B, L, I, N/C, K) — radios Sí/No.
+- **Resultado autocalculado** al enviar: `blink_total` = suma de L+I+N/C+K
+  (1 pt c/u); `blink_resultado` = "Benigna evidente — no precisa más
+  estudios" si B=Sí, o "Sugiere malignidad (n/4) — biopsia" si total ≥2,
+  o "Sugiere benignidad (n/4)" si total ≤1.
+- Se almacena en el episodio: 7 campos nuevos en el `entity_definition`
+  `episode` (`blink_benigna`, `blink_lonely`, `blink_irregular`,
+  `blink_nervios_cambios`, `blink_known_clues`, `blink_total`,
+  `blink_resultado`) — `001_medical_definitions.sql`.
+- El **puntaje BLINK** se muestra en la cabecera del chat junto al semáforo
+  Dx (badge "Blink n"); se pinta rojo cuando ≥2. Si BLINK aún no se completó
+  muestra "Blink -" (se distingue de un 0 real vía `blink_resultado`).

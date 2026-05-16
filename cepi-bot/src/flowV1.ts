@@ -179,6 +179,15 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   { key: 'tratamientos_previos', label: 'Detalle tratamientos previos', type: 'text' },
   { key: 'anamnesis', label: 'Anamnesis (notas)', type: 'textarea' },
   ] as BotFormField[]).map(field => ({ category: 'Anamnesis', target: 'episode' as const, field })),
+  // BLINK — cribado de malignidad (episodio), antes del examen físico.
+  // `blink_total` y `blink_resultado` se autocalculan al enviar el formulario.
+  ...([
+  { key: 'blink_benigna', label: 'B — ¿La lesión se reconoce de inmediato como benigna?', type: 'radio', options: SI_NO },
+  { key: 'blink_lonely', label: 'L — ¿Es la lesión solitaria de su tipo ("patito feo")?', type: 'radio', options: SI_NO },
+  { key: 'blink_irregular', label: 'I — ¿Pigmentación asimétrica o ≥1 color?', type: 'radio', options: SI_NO },
+  { key: 'blink_nervios_cambios', label: 'N/C — ¿Paciente nervioso por cáncer o lesión cambiante?', type: 'radio', options: SI_NO },
+  { key: 'blink_known_clues', label: 'K — ¿≥1 pista dermatoscópica de malignidad?', type: 'radio', options: SI_NO },
+  ] as BotFormField[]).map(field => ({ category: 'BLINK', target: 'episode' as const, field })),
   // §4 Examen físico (episodio)
   ...([
   // §4.1 Lesión elemental
@@ -267,6 +276,7 @@ const FICHA_GROUP_SPEC: { id: string; label: string; keys: string[] }[] = [
   { id: 'g_3_5', label: '3.5 Causa aparente',         keys: ['causa_aparente_presente','causa_aparente'] },
   { id: 'g_3_6', label: '3.6 Patología asociada / RAS', keys: ['patologia_asociada_presente','patologia_asociada'] },
   { id: 'g_3_7', label: '3.7 Tratamientos previos',   keys: ['tratamientos_previos_presente','tratamientos_previos'] },
+  { id: 'g_blink', label: 'BLINK',                    keys: ['blink_benigna','blink_lonely','blink_irregular','blink_nervios_cambios','blink_known_clues'] },
   { id: 'g_4_1', label: '4.1 Lesión elemental',       keys: ['lesion_macula','lesion_papula','lesion_placa','lesion_vesicula','lesion_ampolla','lesion_tumor','lesion_nodulo','lesion_ulcera','lesion_otra'] },
   { id: 'g_4_2', label: '4.2 Características',         keys: ['caract_eritema','caract_descamacion','caract_exudacion','caract_liquenificacion','caract_otra'] },
   { id: 'g_4_3', label: '4.3 Topografía',             keys: ['topo_unica','topo_multiples','topo_bilateral','topo_simetrico','topo_confluente','topo_agrupadas','topo_circular','topo_lineal','topo_borde','topo_otra'] },
@@ -457,6 +467,7 @@ const FICHA_EPISODE_KEYS = new Set<string>([
       .filter(f => f.type !== 'image_upload')
       .map(f => f.key).filter((k): k is string => !!k)),
   'gravedad_total', 'ficha_num', 'examinador_nombre', 'regiones_afectadas',
+  'blink_total', 'blink_resultado',
 ]);
 
 /** Traffic-light label for a §5 diagnosis letter. */
@@ -902,12 +913,28 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
               (a, k) => a + (Number(data[k] ?? cur[k]) || 0), 0);
           } catch { /* skip total */ }
         }
+        // BLINK — the whole section is one form, so this submit carries all
+        // 5 answers; autocalculate the score (L+I+N/C+K, 1 pt each) + result.
+        if (gid === 'g_blink') {
+          const scoreKeys = ['blink_lonely', 'blink_irregular', 'blink_nervios_cambios', 'blink_known_clues'];
+          const total = scoreKeys.reduce((a, k) => a + (data[k] === true ? 1 : 0), 0);
+          data.blink_total = total;
+          data.blink_resultado = data.blink_benigna === true
+            ? 'Benigna evidente — no precisa más estudios'
+            : total >= 2
+              ? `Sugiere malignidad (${total}/4) — biopsia`
+              : `Sugiere benignidad (${total}/4)`;
+        }
       }
       // Human-readable record of what the form submitted — written into chat.
       const fmt = (v: unknown) => v === true ? 'Sí' : v === false ? 'No' : String(v);
       const summaryLines = (grp?.fields || [])
         .filter(f => f.key && data[f.key] !== undefined && data[f.key] !== null && data[f.key] !== '')
         .map(f => `  • ${f.label}: ${fmt(data[f.key!])}`);
+      // Surface the autocalculated BLINK result (not a form field).
+      if (gid === 'g_blink' && data.blink_resultado) {
+        summaryLines.push(`  • Resultado BLINK: ${data.blink_resultado}`);
+      }
       const summary = `📋 ${grp?.label || 'Formulario'}\n` +
         (summaryLines.length ? summaryLines.join('\n') : '  (sin datos)');
 

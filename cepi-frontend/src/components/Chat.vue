@@ -103,6 +103,12 @@
               @click="setDiagnostico(opt.letra)"
             >{{ opt.letra }}</button>
           </div>
+          <div
+            v-if="activeEpisode"
+            class="blink-badge"
+            :class="{ 'blink-alert': blinkTotal !== null && blinkTotal >= 2 }"
+            title="BLINK — puntaje de cribado de malignidad (≥2 sugiere biopsia)"
+          >Blink {{ blinkTotal === null ? '-' : blinkTotal }}</div>
           <button class="pb-ficha" type="button" @click="openFicha">Mostrar ficha</button>
           <button
             class="pb-ficha"
@@ -456,6 +462,7 @@ function onQuickReply(q) {
 const patientLabel = ref('');
 const episodeLabel = ref('');
 const diagnosticoLetra = ref('');   // §5 traffic-light: '', 'A', 'B' or 'C'
+const blinkTotal = ref(null);       // BLINK score (0-4) of the active episode
 const dxOptions = [
   { letra: 'A', cls: 'dx-a', title: 'A — verde' },
   { letra: 'B', cls: 'dx-b', title: 'B — amarillo' },
@@ -630,11 +637,16 @@ async function send(message, opts = {}) {
     if (Array.isArray(r?.await_isic) && r.await_isic.length && activeEpisode.value) {
       startIsicPoll(activeEpisode.value, r.await_isic);
     }
-    // A form submission may have changed the §5 diagnosis severity — refresh
-    // the header traffic-light from the (now-updated) episode entity.
+    // A form submission may have changed the §5 diagnosis severity or the
+    // BLINK score — refresh both header indicators from the updated episode.
     if (fs && activeEpisode.value) {
       fetchEntity(activeEpisode.value)
-        .then(e => { diagnosticoLetra.value = e?.data?.diagnostico_letra || ''; })
+        .then(e => {
+          diagnosticoLetra.value = e?.data?.diagnostico_letra || '';
+          // "-" until BLINK is actually submitted; blink_resultado is only
+          // set by the autocalc, so it distinguishes unfilled from a real 0.
+          blinkTotal.value = e?.data?.blink_resultado ? (e.data.blink_total ?? 0) : null;
+        })
         .catch(() => {});
     }
     if (r?.download && r.download.content) {
@@ -783,11 +795,13 @@ watch(activePatient, async (v) => {
 });
 watch(activeEpisode, async (v) => {
   showGallery.value = false;
-  if (!v) { episodeLabel.value = ''; diagnosticoLetra.value = ''; return; }
+  if (!v) { episodeLabel.value = ''; diagnosticoLetra.value = ''; blinkTotal.value = null; return; }
   const e = await fetchEntity(v);
   const d = e?.data || {};
   episodeLabel.value = [d.fecha, d.motivo_consulta].filter(Boolean).join(' · ');
   diagnosticoLetra.value = d.diagnostico_letra || '';
+  // "-" until BLINK is submitted (blink_resultado set) — not a real 0.
+  blinkTotal.value = d.blink_resultado ? (d.blink_total ?? 0) : null;
 });
 
 function newSession() {
@@ -1274,6 +1288,15 @@ html[data-theme="dark"] .composer textarea {
 
 .pb-right { display: flex; align-items: center; gap: 12px; }
 .dx-light { display: flex; align-items: center; gap: 4px; }
+.blink-badge {
+  font-size: 0.7rem; font-weight: 800; letter-spacing: .03em;
+  color: #fff; background: rgba(255, 255, 255, .18);
+  border: 1.4px solid rgba(255, 255, 255, .45);
+  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+}
+.blink-badge.blink-alert {
+  background: #c8102e; border-color: #c8102e;
+}
 .dx-caption {
   font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: .05em; color: #fff; margin-right: 2px;
