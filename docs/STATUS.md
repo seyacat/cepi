@@ -337,3 +337,25 @@ exportar [anonimizado]   → descarga JSON
   persistido apunta a un grupo ya completo (p.ej. `fecha_nac` cargada desde
   otra sesión sobre el mismo paciente), se auto-omite hacia el siguiente
   incompleto; si no, se refrescan sus valores desde la entidad.
+
+### Galería de imágenes y resultados ISIC en el chat
+
+- **Botón "Mostrar Imágenes"** junto a "Mostrar ficha" (`Chat.vue`): abre
+  `ImageGallery.vue`, una grilla con las imágenes clínicas del episodio; cada
+  celda muestra la imagen y, en el pie, los resultados de cada modelo.
+- **Endpoint** `GET /api/bot/episode-images?episode_id=…` (cepi-bot) +
+  helper `episodeImages.ts` (`listEpisodeImagesWithClassifications`).
+- **Comando `mostrar resultados imagen`**: lista las clasificaciones de las
+  imágenes del episodio. Acepta ids de `clinical_image` al final para
+  scopearlo a imágenes puntuales. Emite un marcador `[img:<attachment_id>]`
+  por imagen — `MessageContent.vue` lo expande a miniatura inline en el chat
+  (descarga autenticada → blob URL). No emite turno `tool`.
+- **Auto-resultado tras §4.7**: la respuesta del grupo de imágenes lleva
+  `await_isic` con los ids de los `clinical_image` recién creados; el frontend
+  hace polling de cepi-isic (cada 5 s, hasta ~2 min) y, cuando esas imágenes
+  dejan de estar `pending`, auto-envía `mostrar resultados imagen <ids>` —
+  el resultado aparece solo en el chat, scopeado a las imágenes cargadas.
+- **Filtro por columna UUID**: listar imágenes por episodio usa
+  `filter: { episode_id }` (match exacto de columna), no `search` (texto
+  libre, que no matchea UUIDs). Corregido también en `sugerir diagnostico`
+  y `casos similares`.

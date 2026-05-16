@@ -22,6 +22,7 @@ const RE = {
   signs:         /^\/?\s*signs?\s+(.+)$/i,
   exportar:      /^\s*\/?\s*exportar\s*(anonimizado)?\s*$/i,
   attachment:    /\[adjunto:\s*([^·]+)·\s*([0-9a-f-]{36})\s*\]/i,
+  imageResults:  /^\/?\s*mostrar\s+resultados?\s+(?:de\s+(?:las?\s+)?)?im[áa]gen(?:es)?\b\s*(.*)$/i,
   confirmYes:    /^\s*(s[ií]|si|confirmar|ok|adelante|yes)\s*$/i,
   confirmNo:     /^\s*(no|cancelar|cancel|abort)\s*$/i,
 };
@@ -77,6 +78,26 @@ describe('command regexes', () => {
     const m = `[adjunto: foto.jpg · ${VALID_UUID}]`.match(RE.attachment);
     expect(m?.[1].trim()).toBe('foto.jpg');
     expect(m?.[2]).toBe(VALID_UUID);
+  });
+
+  it('matches "mostrar resultados imagen" and its variants', () => {
+    for (const cmd of [
+      'mostrar resultados imagen',
+      'mostrar resultados imágenes',
+      'mostrar resultado de la imagen',
+      'mostrar resultados de imagenes',
+      '/mostrar resultados imagen',
+      // scoped to specific clinical_image ids (the §4.7 auto-flow form)
+      'mostrar resultados imagen 22d9574f-82d7-4936-8105-31674474f47c',
+    ]) {
+      expect(cmd.match(RE.imageResults), cmd).not.toBeNull();
+    }
+    // the captured trailing group carries the optional ids
+    const scoped = 'mostrar resultados imagen 22d9574f-82d7-4936-8105-31674474f47c'
+      .match(RE.imageResults);
+    expect(scoped?.[1]?.trim()).toBe('22d9574f-82d7-4936-8105-31674474f47c');
+    expect('mostrar imagen'.match(RE.imageResults)).toBeNull();
+    expect('mostrar resultados'.match(RE.imageResults)).toBeNull();
   });
 
   it('matches confirmYes / confirmNo vocabulary', () => {

@@ -111,6 +111,7 @@ export class StubLLMAdapter implements LLMAdapter {
           '  📎 (adjuntar imagen)        → crea clinical_image ligada al episodio',
           '  casos similares             → vectors.search sobre la última imagen del episodio',
           '  sugerir diagnostico         → lee classifications de la imagen y mapea a CIE-10',
+          '  mostrar resultados imagen   → resultados de los modelos IA de las imágenes del episodio',
           '',
           '**Chatter**',
           '  nota <texto>                       → agrega nota al episodio (o paciente si no hay episodio)',

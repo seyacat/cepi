@@ -65,6 +65,30 @@ export async function listBotSessions() {
 }
 
 /**
+ * Fetch the clinical images of an episode plus their AI classifications.
+ * Read-only; backed by cepi-bot's /api/bot/episode-images endpoint.
+ */
+export async function getEpisodeImages(episodeId) {
+  return call(`/api/bot/episode-images?episode_id=${encodeURIComponent(episodeId)}`, { method: 'GET' });
+}
+
+/**
+ * Fetch an attachment binary as an object URL. The /api/attachments/:id/file
+ * endpoint needs a Bearer token, which a plain <img src> cannot carry — so we
+ * fetch with auth headers and wrap the response in a blob URL. Callers must
+ * revoke the URL when done.
+ */
+export async function fetchAttachmentObjectUrl(fileUrl) {
+  const headers = {};
+  const jwt = getJwt();
+  if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+  const res = await fetch(fileUrl, { headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+/**
  * Upload a single file to TodoERP /api/attachments. Optional entity_id
  * links the attachment to a record. Returns the attachment row.
  */

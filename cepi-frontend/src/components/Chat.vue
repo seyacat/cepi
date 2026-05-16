@@ -104,6 +104,12 @@
             >{{ opt.letra }}</button>
           </div>
           <button class="pb-ficha" type="button" @click="openFicha">Mostrar ficha</button>
+          <button
+            class="pb-ficha"
+            type="button"
+            :disabled="!activeEpisode"
+            @click="showGallery = true"
+          >Mostrar Imágenes</button>
         </div>
       </div>
 
@@ -162,7 +168,7 @@
             <div v-for="(t, i) in turns" :key="i" :class="['turn', t.role]">
               <span class="role">{{ labelFor(t.role) }}</span>
               <ToolResult v-if="t.role === 'tool'" :tool-name="t.tool_name || ''" :raw-content="t.content" @action="send" />
-              <pre v-else class="content">{{ t.content }}</pre>
+              <MessageContent v-else :content="t.content" />
             </div>
             <div v-if="busy" class="turn assistant"><span class="role">…</span><pre class="content">pensando…</pre></div>
           </div>
@@ -257,14 +263,22 @@
         ></iframe>
       </div>
     </div>
+
+    <ImageGallery
+      v-if="showGallery && activeEpisode"
+      :episode-id="activeEpisode"
+      @close="showGallery = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, watch } from 'vue';
-import { chat, saveSessionId, uploadAttachment, listBotSessions, loadBotSession } from '../api.js';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { chat, saveSessionId, uploadAttachment, listBotSessions, loadBotSession, getEpisodeImages } from '../api.js';
 import ToolResult from './ToolResult.vue';
 import BotForm from './BotForm.vue';
+import ImageGallery from './ImageGallery.vue';
+import MessageContent from './MessageContent.vue';
 
 defineProps({ user: Object });
 
@@ -301,6 +315,7 @@ const bookmarkGroups = computed(() => {
   return out;
 });
 const showFicha = ref(false);
+const showGallery = ref(false);
 const fichaFrame = ref(null);
 const fichaEpisodes = ref([]);   // patient's episodes, most-recent first
 const fichaIndex = ref(0);       // which episode the viewer is showing
@@ -594,7 +609,7 @@ async function send(message, opts = {}) {
   busy.value = true;
   error.value = '';
   // Optimistically render the user turn while waiting.
-  turns.value = [...turns.value, { role: 'user', content: message || '📋 Formulario enviado' }];
+  turns.value = [...turns.value, { role: 'user', content: opts.displayMessage || message || '📋 Formulario enviado' }];
   try {
     const r = await chat(message || '', sessionId.value, fs ? { formSubmission: fs } : {});
     if (r?.session_id) {
@@ -609,6 +624,12 @@ async function send(message, opts = {}) {
     // turns leave it in place so it persists until filled.
     if (r && 'form' in r) botForm.value = r.form || null;
     if (r && 'bookmarks' in r) bookmarks.value = Array.isArray(r.bookmarks) ? r.bookmarks : [];
+    // §4.7 just registered lesion images — the ISIC worker classifies them
+    // asynchronously, so poll until it finishes and then surface the result
+    // for exactly those images in the chat automatically.
+    if (Array.isArray(r?.await_isic) && r.await_isic.length && activeEpisode.value) {
+      startIsicPoll(activeEpisode.value, r.await_isic);
+    }
     // A form submission may have changed the §5 diagnosis severity — refresh
     // the header traffic-light from the (now-updated) episode entity.
     if (fs && activeEpisode.value) {
@@ -659,6 +680,43 @@ async function send(message, opts = {}) {
     }
   }
 }
+
+// ── ISIC classification polling (after a §4.7 image upload) ───────────
+// The cepi-isic worker classifies lesion images asynchronously. After §4.7
+// registers images, poll the episode until no image is 'pending', then
+// auto-send "mostrar resultados imagen" so the result lands in the chat.
+let isicPollTimer = null;
+function stopIsicPoll() {
+  if (isicPollTimer) { clearInterval(isicPollTimer); isicPollTimer = null; }
+}
+function startIsicPoll(episodeId, imageIds) {
+  stopIsicPoll();
+  const wanted = new Set(imageIds);
+  let ticks = 0;
+  isicPollTimer = setInterval(async () => {
+    ticks += 1;
+    // Give up after ~2 min, or if the user moved to another episode.
+    if (ticks > 24 || !episodeId || episodeId !== activeEpisode.value) {
+      stopIsicPoll();
+      return;
+    }
+    try {
+      const r = await getEpisodeImages(episodeId);
+      const mine = (Array.isArray(r?.images) ? r.images : []).filter(im => wanted.has(im.id));
+      if (!mine.length) return;
+      const stillPending = mine.some(im => (im.embedding_status || 'pending') === 'pending');
+      if (!stillPending) {
+        stopIsicPoll();
+        // Scope the result to exactly the images just uploaded.
+        if (!busy.value) {
+          await send('mostrar resultados imagen ' + imageIds.join(' '),
+            { displayMessage: '🔬 Resultados de las imágenes cargadas' });
+        }
+      }
+    } catch { /* transient — keep polling until the tick budget runs out */ }
+  }, 5000);
+}
+onUnmounted(stopIsicPoll);
 
 function onKeyDown(ev) {
   if (ev.key === 'Enter' && !ev.shiftKey) {
@@ -724,6 +782,7 @@ watch(activePatient, async (v) => {
   patientLabel.value = v ? await resolveLabel(v, ['nombre', 'apellidos']) : '';
 });
 watch(activeEpisode, async (v) => {
+  showGallery.value = false;
   if (!v) { episodeLabel.value = ''; diagnosticoLetra.value = ''; return; }
   const e = await fetchEntity(v);
   const d = e?.data || {};

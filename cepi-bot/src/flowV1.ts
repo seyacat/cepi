@@ -73,6 +73,10 @@ export interface FlowResponse {
   form?: BotForm | null;
   pending_action_set?: boolean;
   bookmarks?: FichaBookmark[];
+  /** §4.7 just created these clinical_image ids — the frontend polls
+   *  cepi-isic for them and surfaces the classification once the worker
+   *  finishes. */
+  await_isic?: string[];
 }
 
 /**
@@ -601,24 +605,34 @@ async function handleImageGroupSubmit(
 
   // Write the records directly (no confirmation gate — see header).
   let ok = 0;
+  const okIds: string[] = [];
   const errs: string[] = [];
   for (const c of creates) {
     const r = await mcp.call('entities.create', {
       record_type: 'business', entity_id: entityId, title: c.title, data: c.data,
     });
-    if ((r as any)?.ok) ok++;
-    else errs.push((r as any)?.error || 'error desconocido');
+    if ((r as any)?.ok) {
+      ok++;
+      const id = (r as any)?.data?.id;
+      if (typeof id === 'string') okIds.push(id);
+    } else {
+      errs.push((r as any)?.error || 'error desconocido');
+    }
   }
 
   const head = gid === 'g_8'
     ? `Registré ${ok} imagen(es) de consentimiento ligada(s) al paciente.`
-    : `Registré ${ok} imagen(es) clínica(s) ligada(s) al episodio y al paciente ` +
-      `(el worker ISIC las clasificará en breve).`;
+    : `Registré ${ok} imagen(es) clínica(s) ligada(s) al episodio y al paciente. ` +
+      `El worker ISIC las clasifica en unos segundos — te muestro el resultado acá apenas termine.`;
   const lines = [
     notes.length ? `Revisé las imágenes:\n${notes.join('\n')}` : '',
     head,
     errs.length ? `⚠️ ${errs.length} no se pudo(eron) guardar: ${errs.join('; ')}.` : '',
   ].filter(Boolean);
+
+  // §4.7 — the frontend polls cepi-isic for exactly these new images and
+  // surfaces their classification in the chat once the worker finishes.
+  const awaitIsic = gid === 'g_4_7' && okIds.length ? okIds : undefined;
 
   // Mark the group done and advance to the next incomplete one.
   const doneArr: string[] = ((session.extracted_slots as any)?.ficha_done as string[]) || [];
@@ -630,11 +644,11 @@ async function handleImageGroupSubmit(
     setSlot(session, 'ficha_current', nid);
     const text = `${lines.join('\n\n')}\n\nSiguiente: ${form.title}.`;
     await appendAndSave(session, summary, text, mcp);
-    return { text, form, bookmarks: await fichaBookmarks(mcp, session) };
+    return { text, form, await_isic: awaitIsic, bookmarks: await fichaBookmarks(mcp, session) };
   }
   const text = `${lines.join('\n\n')}\n\nFicha completa. Revisá lo que quieras desde los marcadores.`;
   await appendAndSave(session, summary, text, mcp);
-  return { text, form: null, bookmarks: await fichaBookmarks(mcp, session) };
+  return { text, form: null, await_isic: awaitIsic, bookmarks: await fichaBookmarks(mcp, session) };
 }
 
 /**

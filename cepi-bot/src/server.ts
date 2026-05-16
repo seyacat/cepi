@@ -29,6 +29,7 @@ import {
   nextIncompleteFichaGroupId, fichaGroupIsComplete, fichaBookmarks, BotForm,
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
+import { listEpisodeImagesWithClassifications, CLINICAL_IMAGE_ENTITY_ID, HAM_TO_ICD } from './episodeImages.js';
 
 dotenv.config();
 
@@ -228,6 +229,33 @@ app.get('/api/bot/capabilities', async (req: Request, res: Response, next: NextF
       todoerp_url:  process.env.TODOERP_API_URL  || 'http://localhost:3001',
       tools: tools.map(t => ({ name: t.name, description: t.description })),
     });
+  } catch (err) { next(err); }
+  finally {
+    if (mcp) await mcp.close().catch(() => {});
+  }
+});
+
+/**
+ * /api/bot/episode-images?episode_id=<uuid> — list the clinical images of an
+ * episode plus, for each, its AI classifications. Read-only; used by the
+ * frontend image gallery. Auth via Bearer JWT or x-api-key, like the other
+ * /api/bot GET endpoints.
+ */
+app.get('/api/bot/episode-images', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    const episodeId = String(req.query.episode_id || '').trim();
+    if (!episodeId) return res.status(400).json({ ok: false, error: 'episode_id required' });
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+    const images = await listEpisodeImagesWithClassifications(mcp, episodeId);
+    res.json({ ok: true, images });
   } catch (err) { next(err); }
   finally {
     if (mcp) await mcp.close().catch(() => {});
@@ -640,6 +668,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             active_episode_id: session.active_episode_id,
             pending_action: session.pending_action,
             quick_replies: v1.quick_replies || [],
+            await_isic: v1.await_isic || [],
             form: (session.extracted_slots as any)?.active_form ?? null,
             bookmarks: v1.bookmarks ?? (((session.extracted_slots as any)?.form_state?.kind === 'ficha')
               ? await fichaBookmarks(mcp, session) : undefined),
@@ -861,6 +890,72 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           pending_action: session.pending_action });
       }
 
+      // ── "mostrar resultados imagen" — classifications, optionally scoped ──
+      // Trailing clinical_image UUIDs scope the result to those images (the
+      // §4.7 auto-flow passes the new ones); without ids it lists them all.
+      // Each image is emitted with an inline [img:<attachment_id>] marker the
+      // frontend renders as a thumbnail — no separate tool-result block.
+      const mostrarImgMatch = message.trim().match(
+        /^\/?\s*mostrar\s+resultados?\s+(?:de\s+(?:las?\s+)?)?im[áa]gen(?:es)?\b\s*(.*)$/i,
+      );
+      if (mostrarImgMatch) {
+        if (!activeEpisodeId) {
+          const ackText = 'Activa un episodio primero (activar episodio <uuid>).';
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const wantIds = (mostrarImgMatch[1] || '')
+          .split(/\s+/).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x));
+        let images = await listEpisodeImagesWithClassifications(mcp, activeEpisodeId);
+        if (wantIds.length) images = images.filter(im => wantIds.includes(im.id));
+        let text: string;
+        if (!images.length) {
+          text = wantIds.length
+            ? 'No encontré esas imágenes en el episodio.'
+            : 'No hay imágenes clínicas en el episodio. Adjuntá una primero (📎).';
+        } else {
+          const blocks = images.map((img, i) => {
+            const head = `**Imagen ${i + 1}**` +
+              (img.privada ? ' · 🔒 privada (contiene rostro)' : '');
+            const imgTag = img.attachment_id ? `[img:${img.attachment_id}]` : '';
+            if (img.embedding_status === 'pending' && !img.classifications.length) {
+              return [head, imgTag, '  Clasificación en proceso…'].filter(Boolean).join('\n');
+            }
+            if (!img.classifications.length) {
+              return [head, imgTag, '  Sin resultados aún.'].filter(Boolean).join('\n');
+            }
+            const clsLines = img.classifications.map((c: any) => {
+              const labels = [...c.labels]
+                .sort((a: any, b: any) => (b.confidence || 0) - (a.confidence || 0))
+                .slice(0, 3)
+                .map((l: any) => `${l.label} ${((l.confidence || 0) * 100).toFixed(0)}%`)
+                .join(', ');
+              return `  • ${c.model_id}: ${labels || '—'}`;
+            });
+            return [head, imgTag, ...clsLines].filter(Boolean).join('\n');
+          });
+          text = [
+            `**Resultados de los modelos IA** — ${images.length} imagen(es):`,
+            '',
+            ...blocks,
+            '',
+            'Recordá: las clasificaciones son informativas. El diagnóstico es decisión del médico (D-Aux-1).',
+          ].join('\n');
+        }
+        const userTurn = wantIds.length
+          ? '🔬 Resultados de las imágenes cargadas'
+          : 'Mostrar resultados de imagen';
+        session.turns = [...session.turns,
+          { role: 'user', content: userTurn },
+          { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
       // ── "sugerir diagnostico" — read classifications + map to CIE-10 ──
       if (/^\s*\/?\s*sugerir\s+diagn[óo]stico\s*$/i.test(message.trim())) {
         if (!activeEpisodeId) {
@@ -872,8 +967,8 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
             toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
         }
         const list = await mcp.call('entities.list', {
-          type: '16000000-0000-0000-0000-000000000000',
-          search: activeEpisodeId,
+          type: CLINICAL_IMAGE_ENTITY_ID,
+          filter: { episode_id: activeEpisodeId },
           limit: 1,
         });
         const img = Array.isArray(list.data) && list.data.length ? list.data[0] : null;
@@ -897,16 +992,6 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
             toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
         }
-        // HAM10000 → CIE-10 (dermatology subset), best-effort mapping.
-        const HAM_TO_ICD: Record<string, string[]> = {
-          akiec: ['L82', 'Queratosis seborreica (queratosis actínica clínica)'],
-          bcc:   ['C44.9', 'Cáncer de piel no melanoma (basocelular)'],
-          bkl:   ['L82', 'Queratosis seborreica'],
-          df:    ['D23.9', 'Dermatofibroma — neoplasia benigna de piel'],
-          mel:   ['C43.9', 'Melanoma maligno de piel'],
-          nv:    ['D22.9', 'Nevus melanocítico'],
-          vasc:  ['L98.9', 'Lesión vascular cutánea'],
-        };
         const top = Array.isArray(multi?.labels) && multi.labels.length ? multi.labels[0] : null;
         const triageTop = Array.isArray(triage?.labels) && triage.labels.length ? triage.labels[0] : null;
         const mapped = top && HAM_TO_ICD[top.label] ? HAM_TO_ICD[top.label] : null;
@@ -942,7 +1027,7 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         // Find the most recent clinical_image whose data references this episode.
         const list = await mcp.call('entities.list', {
           type: '16000000-0000-0000-0000-000000000000',
-          search: activeEpisodeId,
+          filter: { episode_id: activeEpisodeId },
           limit: 5,
         });
         const img = Array.isArray(list.data) && list.data.length ? list.data[0] : null;
