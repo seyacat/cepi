@@ -44,6 +44,15 @@ export class TodoErpMcpClient {
     this.opts = opts;
   }
 
+  /** Bearer JWT this client authenticates with (for direct REST calls). */
+  get jwt(): string { return this.opts.jwt || process.env.TODOERP_JWT || ''; }
+  /** API key fallback for machine-to-machine auth. */
+  get apiKey(): string { return this.opts.apiKey || process.env.TODOERP_API_KEY || ''; }
+  /** Base URL of the running TodoERP backend. */
+  get apiUrl(): string {
+    return this.opts.apiUrl || process.env.TODOERP_API_URL || 'http://localhost:3001';
+  }
+
   async connect(): Promise<void> {
     if (this.client) return;
     const mcpEntry = this.opts.mcpEntry

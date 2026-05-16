@@ -300,3 +300,37 @@ exportar [anonimizado]   → descarga JSON
 - **Ficha (`ficha.html`)**: edad autocalculada desde fecha de nacimiento;
   selects de Picor/Dolor con tipografía uniforme y opciones (+)/(++)/(+++);
   los labels en rojo muestran "Valor anterior: …" al hover.
+
+### Ficha §4.6/§4.7/§8 — mapa corporal e imágenes
+
+- **§4.6 Regiones afectadas**: nuevo grupo `g_4_6` y nuevo tipo de campo
+  `body_map`. El componente `BodyMapField.vue` replica las dos siluetas de
+  `ficha.html` (`cuerpos.png` + 36 regiones, óvalos clicables); guarda
+  `regiones_afectadas` como CSV de claves de región.
+- **§4.7 Imágenes Lesión**: grupo `g_4_7`, tipo de campo `image_upload`
+  (`ImageUploadField.vue`, subida múltiple vía `/api/attachments`). Al enviar,
+  cada imagen pasa por `cepi-isic POST /inspect` (`imageInspect.ts`):
+  - chequeo real de calidad — resolución (≥480px lado menor) e iluminación
+    (brillo medio 40–220/255); las inadecuadas se omiten y el motivo se
+    informa en el chat.
+  - detección de rostro (OpenCV haar cascade) → el `clinical_image` se marca
+    `privada: true` (campo nuevo en el `entity_definition`).
+  - las adecuadas se crean con `embedding_status: 'pending'`; el worker
+    `clinicalImageProcessor` ya existente las clasifica vía ISIC. Vinculadas a
+    episodio y paciente.
+- **§8 Imágenes Consentimiento**: grupo `g_8`; almacena cada imagen como un
+  registro `consent` (`tipo: 'imagen_clinica'`) vinculado al paciente.
+- Ambos grupos de imágenes pasan por el confirmation gate vía
+  `pending_action.batch` (una creación por imagen, auditada en chatter).
+- **cepi-isic**: nuevo endpoint real (no stub) `POST /inspect` — Pillow para
+  dimensiones/brillo, OpenCV para rostro; dependencia `opencv-python-headless`.
+
+### Auto-omisión de formularios ya completos
+
+- `nextIncompleteFichaGroupId()` / `fichaGroupIsComplete()` en `flowV1.ts`: al
+  avanzar la ficha (tras guardar u "Omitir") se salta a la siguiente sección
+  **sin valor**, no a la siguiente en orden.
+- Al reanudar una sesión (`GET /api/bot/session/:id`), si el formulario
+  persistido apunta a un grupo ya completo (p.ej. `fecha_nac` cargada desde
+  otra sesión sobre el mismo paciente), se auto-omite hacia el siguiente
+  incompleto; si no, se refrescan sus valores desde la entidad.

@@ -56,6 +56,22 @@
         <IcdSearchField :field="f" :busy="busy" v-model="values[f.key]" />
       </div>
 
+      <!-- Body map — tappable silhouettes for lesion regions (§4.6). -->
+      <div v-else-if="f.type === 'body_map'" class="bot-form-field">
+        <label>{{ f.label }}<span v-if="f.required" class="bf-req">*</span></label>
+        <BodyMapField v-model="values[f.key]" :busy="busy" />
+      </div>
+
+      <!-- Image upload — lesion / consent images (§4.7, §8). -->
+      <div v-else-if="f.type === 'image_upload'" class="bot-form-field">
+        <label>{{ f.label }}<span v-if="f.required" class="bf-req">*</span></label>
+        <ImageUploadField
+          v-model="values[f.key]"
+          :busy="busy"
+          :multiple="!!f.multiple"
+        />
+      </div>
+
       <!-- Plain text (default). -->
       <div v-else class="bot-form-field">
         <label :for="`bf-${form.id}-${f.key}`">
@@ -99,6 +115,8 @@
 import { reactive, computed } from 'vue';
 import EntitySearchField from './EntitySearchField.vue';
 import IcdSearchField from './IcdSearchField.vue';
+import BodyMapField from './BodyMapField.vue';
+import ImageUploadField from './ImageUploadField.vue';
 
 const props = defineProps({
   form: { type: Object, required: true },

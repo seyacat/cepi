@@ -26,6 +26,13 @@ export interface PendingAction {
   successMessage: string;
   /** ISO timestamp; server may expire after some time (not enforced yet). */
   createdAt: string;
+  /**
+   * Optional multi-step action. When present, the confirmation gate runs
+   * every step (each its own tool/args) in sequence instead of `tool`/`args`.
+   * Used by the image-upload ficha groups, which create one clinical_image
+   * (or consent) record per uploaded attachment.
+   */
+  batch?: Array<{ tool: string; args: Record<string, unknown> }>;
 }
 
 export interface BotSession {

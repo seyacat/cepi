@@ -25,7 +25,8 @@ import { ChatTurn } from './llm.js';
 import { TodoErpMcpClient } from './mcpClient.js';
 import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID, BotSession } from './sessionStore.js';
 import {
-  handleV1Flow, fichaGroupFormFilled, firstIncompleteFichaGroup, fichaBookmarks, BotForm,
+  handleV1Flow, fichaGroupFormFilled, firstIncompleteFichaGroup,
+  nextIncompleteFichaGroupId, fichaGroupIsComplete, fichaBookmarks, BotForm,
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
 
@@ -154,6 +155,28 @@ app.get('/api/bot/session/:id', async (req: Request, res: Response, next: NextFu
     const s = await loadSession(mcp, String(req.params.id));
     if (!s) return res.status(404).json({ ok: false, error: 'Session not found' });
 
+    // Resume the persisted form, but re-evaluate ficha groups: a field shared
+    // across sessions (e.g. fecha de nacimiento on the patient) may have been
+    // filled elsewhere since this form was staged. If so, auto-skip it.
+    let form: BotForm | null = (s.extracted_slots as any)?.active_form ?? null;
+    const isFicha = (s.extracted_slots as any)?.form_state?.kind === 'ficha';
+    if (isFicha && form && typeof form.id === 'string' && form.id.startsWith('ficha_grp_')) {
+      const gid = form.id.slice('ficha_grp_'.length);
+      if (await fichaGroupIsComplete(gid, mcp, s)) {
+        const nid = await nextIncompleteFichaGroupId(gid, mcp, s);
+        form = nid ? await fichaGroupFormFilled(nid, mcp, s) : null;
+        s.extracted_slots = {
+          ...(s.extracted_slots || {}),
+          active_form: form,
+          ...(nid ? { ficha_current: nid } : {}),
+        };
+        await saveSession(mcp, s);
+      } else {
+        // Refresh the form's pre-filled values from the current DB state.
+        form = (await fichaGroupFormFilled(gid, mcp, s)) ?? form;
+      }
+    }
+
     res.json({
       ok: true,
       session_id: s.id,
@@ -161,9 +184,8 @@ app.get('/api/bot/session/:id', async (req: Request, res: Response, next: NextFu
       active_patient_id: s.active_patient_id,
       active_episode_id: s.active_episode_id,
       pending_action: s.pending_action,
-      form: (s.extracted_slots as any)?.active_form ?? null,
-      bookmarks: ((s.extracted_slots as any)?.form_state?.kind === 'ficha')
-        ? await fichaBookmarks(mcp, s) : [],
+      form,
+      bookmarks: isFicha ? await fichaBookmarks(mcp, s) : [],
     });
   } catch (err) { next(err); }
   finally {
@@ -461,6 +483,50 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
       if (session.pending_action) {
         if (confirmYes.test(message.trim())) {
           const pa = session.pending_action;
+
+          // ── Multi-step (batch) pending action — run every step in order.
+          // Used by the image-upload ficha groups (one create per image).
+          if (Array.isArray(pa.batch) && pa.batch.length) {
+            const ids: string[] = [];
+            const errs: string[] = [];
+            const batchCalls: any[] = [];
+            for (const step of pa.batch) {
+              const r = await mcp.call(step.tool, step.args);
+              batchCalls.push({ name: step.tool, args: step.args, result: r });
+              if ((r as any)?.ok) {
+                const nid = (r as any)?.data?.id || '';
+                if (nid) {
+                  ids.push(nid);
+                  await mcp.call('chatter.add_note', {
+                    entity_id: nid,
+                    body: `🤖 Acción ejecutada por el agente: \`${step.tool}\` — ${pa.summary}`,
+                  }).catch(() => {});
+                }
+              } else {
+                errs.push((r as any)?.error || 'error');
+              }
+            }
+            const ackText = errs.length
+              ? `${pa.successMessage.replace(/\{\{count\}\}/g, String(ids.length))}` +
+                ` (con ${errs.length} error(es): ${errs.join('; ')})`
+              : pa.successMessage.replace(/\{\{count\}\}/g, String(ids.length));
+            session.pending_action = null;
+            session.turns = [
+              ...session.turns,
+              { role: 'user',      content: message },
+              { role: 'assistant', content: ackText },
+            ];
+            await saveSession(mcp, session);
+            return res.json({
+              ok: true, session_id: sessionId, text: ackText,
+              history: session.turns, toolCalls: batchCalls,
+              active_patient_id: session.active_patient_id,
+              active_episode_id: session.active_episode_id,
+              bookmarks: ((session.extracted_slots as any)?.form_state?.kind === 'ficha')
+                ? await fichaBookmarks(mcp, session) : undefined,
+            });
+          }
+
           const result = await mcp.call(pa.tool, pa.args);
           const newId  = result.ok ? (result.data?.id || '') : '';
           const ackText = result.ok

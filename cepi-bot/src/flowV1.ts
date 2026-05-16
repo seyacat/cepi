@@ -7,9 +7,12 @@
  */
 import { TodoErpMcpClient } from './mcpClient.js';
 import { BotSession, saveSession } from './sessionStore.js';
+import { inspectAttachment } from './imageInspect.js';
 
 const PATIENT_ENTITY_ID = '11000000-0000-0000-0000-000000000000';
 const EPISODE_ENTITY_ID = '12000000-0000-0000-0000-000000000000';
+const CLINICAL_IMAGE_ENTITY_ID = '16000000-0000-0000-0000-000000000000';
+const CONSENT_ENTITY_ID = '18000000-0000-0000-0000-000000000000';
 
 export interface QuickReply { label: string; send: string; }
 
@@ -18,9 +21,11 @@ export interface BotFormField {
   /** Omitted for decorative `heading` fields. */
   key?: string;
   label: string;
-  type?: 'text' | 'textarea' | 'checkbox' | 'radio' | 'heading' | 'entity_search' | 'icd_search' | 'date';
+  type?: 'text' | 'textarea' | 'checkbox' | 'radio' | 'heading' | 'entity_search' | 'icd_search' | 'date' | 'body_map' | 'image_upload';
   placeholder?: string;
   required?: boolean;
+  /** `image_upload` only — allow selecting more than one image. */
+  multiple?: boolean;
   /** `radio` only — the available choices. */
   options?: Array<string | { label: string; value: string | number | boolean }>;
   // `entity_search` only — live autocomplete against /api/entities:
@@ -210,6 +215,10 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   { key: 'patron_tumor', label: 'Patrón: Tumor', type: 'radio', options: SI_NO },
   { key: 'patron_color', label: 'Patrón: Color', type: 'radio', options: SI_NO },
   { key: 'notas_examen', label: 'Notas del examen', type: 'textarea' },
+  // §4.6 Regiones afectadas — mapa corporal (CSV de claves de región).
+  { key: 'regiones_afectadas', label: 'Regiones afectadas', type: 'body_map' },
+  // §4.7 Imágenes de la lesión — subida de fotos (CSV de attachment ids).
+  { key: 'imagenes_lesion', label: 'Imágenes de la lesión', type: 'image_upload', multiple: true },
   ] as BotFormField[]).map(field => ({ category: 'Examen físico', target: 'episode' as const, field })),
   // §5 Diagnóstico (episodio)
   ...([
@@ -228,6 +237,8 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   { key: 'proximo_control_fecha', label: 'Próximo control', type: 'date' },
   { key: 'proximo_control_motivo', label: 'Motivo del próximo control', type: 'text' },
   ] as BotFormField[]).map(field => ({ category: 'Tratamiento', target: 'episode' as const, field })),
+  // §8 Imágenes de consentimiento (paciente)
+  { category: 'Consentimiento', target: 'patient', field: { key: 'imagen_consentimiento', label: 'Imagen del consentimiento', type: 'image_upload' } },
 ];
 
 /** La ficha se agrupa por sección/subsección: un formulario por grupo. */
@@ -257,9 +268,12 @@ const FICHA_GROUP_SPEC: { id: string; label: string; keys: string[] }[] = [
   { id: 'g_4_3', label: '4.3 Topografía',             keys: ['topo_unica','topo_multiples','topo_bilateral','topo_simetrico','topo_confluente','topo_agrupadas','topo_circular','topo_lineal','topo_borde','topo_otra'] },
   { id: 'g_4_4', label: '4.4 Gravedad',               keys: ['gravedad_extension','gravedad_intensidad','gravedad_funcionalidad'] },
   { id: 'g_4_5', label: '4.5 Patrón',                 keys: ['patron_inflam_epidermica','patron_inflam_dermica','patron_necrosis','patron_tumor','patron_color','notas_examen'] },
+  { id: 'g_4_6', label: '4.6 Regiones afectadas',     keys: ['regiones_afectadas'] },
+  { id: 'g_4_7', label: '4.7 Imágenes Lesión',        keys: ['imagenes_lesion'] },
   { id: 'g_5',   label: '5 Diagnóstico',              keys: ['diagnostico','diagnostico_letra'] },
   { id: 'g_6',   label: '6 Estudios complementarios', keys: ['estudios_complementarios_presente','estudios_complementarios_resumen'] },
   { id: 'g_7',   label: '7 Tratamiento y plan',       keys: ['tratamiento_resumen','plan','proximo_control_fecha','proximo_control_motivo'] },
+  { id: 'g_8',   label: '8 Imágenes Consentimiento',  keys: ['imagen_consentimiento'] },
 ];
 
 export const FICHA_GROUPS: FichaGroup[] = FICHA_GROUP_SPEC.map(g => ({
@@ -344,7 +358,39 @@ export async function fichaBookmarks(
       episodeData = ((er as any)?.data?.data) || {};
     } catch { episodeData = {}; }
   }
+  // Image-upload groups don't store a field on the entity — they create
+  // clinical_image / consent records. Mark them done when such a record
+  // exists for the active episode / patient.
+  let hasLesionImages = false;
+  let hasConsentImages = false;
+  if (session.active_episode_id) {
+    try {
+      const r = await mcp.call('entities.list', {
+        type: CLINICAL_IMAGE_ENTITY_ID,
+        filter: { episode_id: session.active_episode_id },
+        limit: 1,
+      });
+      hasLesionImages = Array.isArray((r as any)?.data) && (r as any).data.length > 0;
+    } catch { /* treat as none */ }
+  }
+  if (session.active_patient_id) {
+    try {
+      const r = await mcp.call('entities.list', {
+        type: CONSENT_ENTITY_ID,
+        filter: { patient_id: session.active_patient_id, tipo: 'imagen_clinica' },
+        limit: 1,
+      });
+      hasConsentImages = Array.isArray((r as any)?.data) && (r as any).data.length > 0;
+    } catch { /* treat as none */ }
+  }
+
   return FICHA_GROUPS.map(g => {
+    if (g.id === 'g_4_7') {
+      return { id: g.id, label: g.label, category: g.category, done: hasLesionImages };
+    }
+    if (g.id === 'g_8') {
+      return { id: g.id, label: g.label, category: g.category, done: hasConsentImages };
+    }
     const src = g.target === 'patient' ? patientData : episodeData;
     const key = g.fields[0].key as string;
     const v = src[key];
@@ -365,6 +411,31 @@ export async function firstIncompleteFichaGroup(
   return marks.find(m => !m.done)?.id ?? null;
 }
 
+/**
+ * First ficha group strictly after `afterId` that still has no value, so the
+ * flow auto-skips sections already complete when advancing — e.g. a shared
+ * patient field (fecha de nacimiento) filled from another session.
+ * Returns null when nothing after `afterId` is left to fill.
+ */
+export async function nextIncompleteFichaGroupId(
+  afterId: string, mcp: TodoErpMcpClient, session: BotSession,
+): Promise<string | null> {
+  const marks = await fichaBookmarks(mcp, session);
+  const start = marks.findIndex(m => m.id === afterId) + 1;
+  for (let i = start; i < marks.length; i++) {
+    if (!marks[i].done) return marks[i].id;
+  }
+  return null;
+}
+
+/** Whether a ficha group already holds a value on its target entity. */
+export async function fichaGroupIsComplete(
+  id: string, mcp: TodoErpMcpClient, session: BotSession,
+): Promise<boolean> {
+  const marks = await fichaBookmarks(mcp, session);
+  return marks.find(m => m.id === id)?.done ?? false;
+}
+
 // Key routing for a full-ficha "Guardar": §1–§2 → paciente, resto → episodio.
 // Identity fields (nombre/apellidos/cedula) are intentionally excluded.
 const FICHA_PATIENT_KEYS = new Set<string>([
@@ -376,7 +447,11 @@ const FICHA_PATIENT_KEYS = new Set<string>([
 ]);
 const FICHA_EPISODE_KEYS = new Set<string>([
   ...FICHA_GROUPS.flatMap(g =>
-    g.fields.map(f => f.key).filter((k): k is string => !!k)),
+    g.fields
+      // image_upload keys are not entity columns — they drive clinical_image
+      // / consent creation, not entities.update. Exclude from save routing.
+      .filter(f => f.type !== 'image_upload')
+      .map(f => f.key).filter((k): k is string => !!k)),
   'gravedad_total', 'ficha_num', 'examinador_nombre', 'regiones_afectadas',
 ]);
 
@@ -418,6 +493,148 @@ function appendAndSave(s: BotSession, userMsg: string, botMsg: string, mcp: Todo
     { role: 'assistant', content: botMsg },
   ];
   return saveSession(mcp, s);
+}
+
+/** Parse the CSV produced by the image_upload field into attachment ids. */
+function parseAttachmentCsv(v: unknown): string[] {
+  if (typeof v !== 'string') return [];
+  return v.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/**
+ * Submit handler for the §4.7 (Imágenes Lesión) and §8 (Imágenes
+ * Consentimiento) ficha groups.
+ *
+ * §4.7 — for each uploaded attachment: inspect via cepi-isic (quality + face).
+ *   Inadequate images are skipped (reported in chat); images with a face are
+ *   flagged `privada`. Adequate images are staged as clinical_image creates
+ *   (embedding_status:'pending', linked to episode + patient) behind the
+ *   confirmation gate. The clinicalImageProcessor worker does ISIC after.
+ * §8 — each uploaded attachment is staged as a consent record (tipo:
+ *   'imagen_clinica') linked to the patient. No quality/face/ISIC checks.
+ *
+ * Both stage a `pending_action` (batch) so the writes pass the confirmation
+ * gate (PAPER §13.3.1). Returns a FlowResponse with `pending_action_set`.
+ */
+async function handleImageGroupSubmit(
+  gid: 'g_4_7' | 'g_8',
+  data: Record<string, unknown>,
+  session: BotSession,
+  mcp: TodoErpMcpClient,
+  message: string,
+): Promise<FlowResponse> {
+  const key = gid === 'g_4_7' ? 'imagenes_lesion' : 'imagen_consentimiento';
+  const attachmentIds = parseAttachmentCsv(data[key]);
+  const grp = FICHA_GROUPS.find(g => g.id === gid);
+
+  if (!attachmentIds.length) {
+    const text = 'No subiste ninguna imagen. Elegí al menos un archivo y volvé a guardar.';
+    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+    return { text, form: fichaGroupForm(gid), bookmarks: await fichaBookmarks(mcp, session) };
+  }
+
+  // ── §8 — consentimiento: store + link to patient, nothing else. ──
+  if (gid === 'g_8') {
+    if (!session.active_patient_id) {
+      const text = 'Necesito un paciente activo para registrar el consentimiento.';
+      await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+      return { text };
+    }
+    const batch = attachmentIds.map(aid => ({
+      tool: 'entities.create',
+      args: {
+        record_type: 'business',
+        entity_id: CONSENT_ENTITY_ID,
+        title: `consent_imagen_${aid.slice(0, 8)}`,
+        data: {
+          [`${PATIENT_ENTITY_ID}:patient_id`]: session.active_patient_id,
+          tipo: 'imagen_clinica',
+          version: 'imagen-subida',
+          documento: aid,
+          firmado_at: new Date().toISOString().slice(0, 10),
+        },
+      },
+    }));
+    session.pending_action = {
+      summary: `Registrar ${batch.length} consentimiento(s) de imagen para el paciente ${session.active_patient_id}`,
+      tool: 'entities.create',
+      args: {},
+      batch,
+      successMessage: `Listo. Registré {{count}} consentimiento(s) de imagen ligado(s) al paciente.`,
+      createdAt: new Date().toISOString(),
+    };
+    const text =
+      `Voy a registrar ${batch.length} imagen(es) de consentimiento ligadas al paciente activo.\n\n` +
+      `¿Confirmas? (sí / no)`;
+    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+    return { text, pending_action_set: true, bookmarks: await fichaBookmarks(mcp, session) };
+  }
+
+  // ── §4.7 — lesión: inspect each image, then stage the good ones. ──
+  if (!session.active_episode_id || !session.active_patient_id) {
+    const text = 'Necesito un paciente y un episodio activos para registrar imágenes de la lesión.';
+    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+    return { text };
+  }
+
+  const notes: string[] = [];
+  const batch: Array<{ tool: string; args: Record<string, unknown> }> = [];
+  for (const aid of attachmentIds) {
+    const r = await inspectAttachment(aid, mcp);
+    const short = aid.slice(0, 8);
+    if (!r.adequate) {
+      const why = r.reasons.length ? r.reasons.join('; ') : (r.error || 'no apta');
+      notes.push(`  • Imagen ${short}… descartada — ${why}. Subí otra.`);
+      continue;
+    }
+    if (r.has_face) {
+      notes.push(`  • Imagen ${short}… contiene un rostro — la marqué como privada.`);
+    } else {
+      notes.push(`  • Imagen ${short}… apta (${r.width}×${r.height}px).`);
+    }
+    batch.push({
+      tool: 'entities.create',
+      args: {
+        record_type: 'business',
+        entity_id: CLINICAL_IMAGE_ENTITY_ID,
+        title: `clinical_image_${short}`,
+        data: {
+          [`${EPISODE_ENTITY_ID}:episode_id`]: session.active_episode_id,
+          [`${PATIENT_ENTITY_ID}:patient_id`]: session.active_patient_id,
+          attachment_id: aid,
+          imagen: aid,
+          field_key: 'lesion',
+          consentimiento_uso_imagen: true,
+          embedding_status: 'pending',
+          privada: !!r.has_face,
+        },
+      },
+    });
+  }
+
+  if (!batch.length) {
+    const text =
+      `Ninguna de las imágenes pasó el control de calidad:\n${notes.join('\n')}`;
+    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+    return { text, form: fichaGroupForm(gid), bookmarks: await fichaBookmarks(mcp, session) };
+  }
+
+  session.pending_action = {
+    summary: `Registrar ${batch.length} imagen(es) de lesión ligadas al episodio ${session.active_episode_id}`,
+    tool: 'entities.create',
+    args: {},
+    batch,
+    successMessage:
+      `Listo. Registré {{count}} imagen(es) clínica(s) ligada(s) al episodio y al paciente. ` +
+      `El worker ISIC las clasificará en breve.`,
+    createdAt: new Date().toISOString(),
+  };
+  const text =
+    `Revisé las imágenes:\n${notes.join('\n')}\n\n` +
+    `Voy a registrar ${batch.length} imagen(es) clínica(s) (clasificación ISIC automática). ` +
+    `¿Confirmas? (sí / no)`;
+  await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+  return { text, pending_action_set: true, bookmarks: await fichaBookmarks(mcp, session) };
 }
 
 /**
@@ -625,7 +842,7 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
 
     // "Omitir" — skip the current form, move to the next one (nothing saved).
     if (/^\s*\/?\s*omitir(\s+ficha)?\s*$/i.test(trimmed)) {
-      const nid = nextFichaGroupId(current);
+      const nid = await nextIncompleteFichaGroupId(current, mcp, session);
       if (nid) {
         const form = (await fichaGroupFormFilled(nid, mcp, session))!;
         setSlot(session, 'ficha_current', nid);
@@ -643,6 +860,15 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
       const gid = sub.form_id.slice('ficha_grp_'.length);
       const grp = FICHA_GROUPS.find(g => g.id === gid);
       const data: Record<string, unknown> = { ...(sub.data || {}) };
+
+      // ── §4.7 / §8 image-upload groups ─────────────────────────────────
+      // These groups don't write a field on the episode/patient — they
+      // create clinical_image / consent records. The image-upload field's
+      // value is a CSV of already-uploaded attachment ids.
+      if (gid === 'g_4_7' || gid === 'g_8') {
+        return handleImageGroupSubmit(gid, data, session, mcp, message);
+      }
+
       const isPatient = grp?.target === 'patient';
       const targetId = isPatient ? session.active_patient_id : session.active_episode_id;
       // Numeric column — coerce the text input before persisting.
@@ -692,7 +918,7 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
       const done: string[] = ((session.extracted_slots as any)?.ficha_done as string[]) || [];
       if (!done.includes(gid)) done.push(gid);
       setSlot(session, 'ficha_done', done);
-      const nid = nextFichaGroupId(gid);
+      const nid = await nextIncompleteFichaGroupId(gid, mcp, session);
       if (nid) {
         const form = (await fichaGroupFormFilled(nid, mcp, session))!;
         setSlot(session, 'ficha_current', nid);
