@@ -225,7 +225,7 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   ...([
   { key: 'tratamiento_resumen', label: 'Tratamiento', type: 'textarea' },
   { key: 'plan', label: 'Plan', type: 'textarea' },
-  { key: 'proximo_control_fecha', label: 'Próximo control', type: 'text', placeholder: 'YYYY-MM-DD' },
+  { key: 'proximo_control_fecha', label: 'Próximo control', type: 'date' },
   { key: 'proximo_control_motivo', label: 'Motivo del próximo control', type: 'text' },
   ] as BotFormField[]).map(field => ({ category: 'Tratamiento', target: 'episode' as const, field })),
 ];
@@ -353,6 +353,18 @@ export async function fichaBookmarks(
   });
 }
 
+/**
+ * First ficha group still missing a value, so the flow can skip sections that
+ * are already complete (e.g. a returning patient with full contact data).
+ * Returns null when every group is already filled.
+ */
+export async function firstIncompleteFichaGroup(
+  mcp: TodoErpMcpClient, session: BotSession,
+): Promise<string | null> {
+  const marks = await fichaBookmarks(mcp, session);
+  return marks.find(m => !m.done)?.id ?? null;
+}
+
 // Key routing for a full-ficha "Guardar": §1–§2 → paciente, resto → episodio.
 // Identity fields (nombre/apellidos/cedula) are intentionally excluded.
 const FICHA_PATIENT_KEYS = new Set<string>([
@@ -425,6 +437,10 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
     const patientData: Record<string, unknown> = {};
     const episodeData: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(data)) {
+      // Never let an empty field clear stored data — entities.update merges
+      // field-by-field, so an empty string would overwrite the existing value.
+      // (Same guard the group forms apply in BotForm.onSubmit.)
+      if (v === '' || v === null || v === undefined) continue;
       if (FICHA_PATIENT_KEYS.has(k)) patientData[k] = v;
       else if (FICHA_EPISODE_KEYS.has(k)) episodeData[k] = v;
     }
@@ -530,7 +546,7 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
         args: {
           record_type: 'business',
           entity_id: PATIENT_ENTITY_ID,
-          title: `paciente_${cedula}`,
+          title: `${nombre} ${apellidos}`.trim(),
           data: { cedula, nombre, apellidos },
         },
         successMessage: isAttention

@@ -25,7 +25,7 @@ import { ChatTurn } from './llm.js';
 import { TodoErpMcpClient } from './mcpClient.js';
 import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID, BotSession } from './sessionStore.js';
 import {
-  handleV1Flow, fichaGroupFormFilled, FICHA_FIRST_GROUP, fichaBookmarks, BotForm,
+  handleV1Flow, fichaGroupFormFilled, firstIncompleteFichaGroup, fichaBookmarks, BotForm,
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
 
@@ -340,13 +340,19 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
         } else {
           const episodeId = await openEpisodeFicha(mcp, session, pid);
           session.active_episode_id = episodeId;
-          fichaForm = await fichaGroupFormFilled(FICHA_FIRST_GROUP, mcp, session);
+          // Skip ficha sections already complete (e.g. a returning patient
+          // with full contact data) — start at the first one still missing.
+          const firstGroup = await firstIncompleteFichaGroup(mcp, session);
+          fichaForm = firstGroup
+            ? await fichaGroupFormFilled(firstGroup, mcp, session)
+            : null;
           session.extracted_slots = {
             ...(session.extracted_slots || {}),
             mode: 'patient',
             patient_context: { id: pid, ...patientData },
             form_state: { kind: 'ficha' },
             ficha_done: [],
+            ...(firstGroup ? { ficha_current: firstGroup } : {}),
             active_form: fichaForm,
           };
         }
@@ -357,7 +363,9 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
           (prevLine ? `\n  ${prevLine}` : '') +
           (infoOnly
             ? `\n\nModo información (no presencial). ¿Qué querés saber del paciente?`
-            : `\n\nAbrí una consulta nueva. Empecemos la ficha clínica:`);
+            : fichaForm
+              ? `\n\nAbrí una consulta nueva. Empecemos la ficha clínica:`
+              : `\n\nAbrí una consulta nueva. La ficha ya está completa — revisá lo que quieras desde los marcadores.`);
         session.turns = [
           ...session.turns,
           { role: 'user',      content: message },
@@ -486,12 +494,16 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
               if ((session.extracted_slots as any)?.mode !== 'patient_info') {
                 const episodeId = await openEpisodeFicha(mcp, session, newId);
                 session.active_episode_id = episodeId;
-                extraForm = await fichaGroupFormFilled(FICHA_FIRST_GROUP, mcp, session);
+                const firstGroup = await firstIncompleteFichaGroup(mcp, session);
+                extraForm = firstGroup
+                  ? await fichaGroupFormFilled(firstGroup, mcp, session)
+                  : null;
                 session.extracted_slots = {
                   ...(session.extracted_slots || {}),
                   mode: 'patient',
                   form_state: { kind: 'ficha' },
                   ficha_done: [],
+                  ...(firstGroup ? { ficha_current: firstGroup } : {}),
                   active_form: extraForm,
                 };
               }

@@ -73,14 +73,8 @@
     </template>
 
     <div class="bot-form-actions">
-      <button
-        v-if="(form.submit_send || form.submit_mode === 'structured') && !autoSubmit"
-        type="submit"
-        class="bf-submit"
-        :disabled="busy || !canSubmit"
-      >
-        {{ form.submit_label || 'Enviar' }}
-      </button>
+      <!-- Secondary actions (e.g. Omitir) sit on the opposite edge from
+           Guardar so they aren't hit by accident. -->
       <button
         v-for="(a, i) in form.actions || []"
         :key="i"
@@ -89,6 +83,14 @@
         :disabled="busy"
         @click="$emit('send', a.send)"
       >{{ a.label }}</button>
+      <button
+        v-if="(form.submit_send || form.submit_mode === 'structured') && !autoSubmit"
+        type="submit"
+        class="bf-submit"
+        :disabled="busy || !canSubmit"
+      >
+        {{ form.submit_label || 'Enviar' }}
+      </button>
     </div>
   </form>
 </template>
@@ -249,6 +251,8 @@ function onSubmit() {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
+  /* Omitir (left) and Guardar (right) pushed to opposite edges. */
+  justify-content: space-between;
 }
 .bf-submit {
   background: var(--accent);

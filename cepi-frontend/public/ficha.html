@@ -60,7 +60,13 @@
     background: transparent; font: inherit; color: #0a3a6b;
     padding: 0 2px; outline: none;
   }
+  select {
+    border: none; border-bottom: 1px solid #555;
+    background: transparent; font: inherit; color: #0a3a6b;
+    padding: 0 2px; outline: none;
+  }
   input[type="text"]:focus, input[type="number"]:focus, input[type="date"]:focus,
+  select:focus,
   textarea:focus { background: #fffbe8; }
   textarea {
     border: none; resize: none; width: 100%;
@@ -421,8 +427,8 @@
               <label><input type="checkbox" name="sintomas_presente_no"> No</label>
             </div>
             <div class="sintomas-right">
-              <div class="caract-item"><span>Picor:</span><select name="picor"><option value=""></option><option value="leve">leve</option><option value="moderado">moderado</option><option value="severo">severo</option></select></div>
-              <div class="caract-item"><span>Dolor:</span><select name="dolor"><option value=""></option><option value="leve">leve</option><option value="moderado">moderado</option><option value="severo">severo</option></select></div>
+              <div class="caract-item"><span>Picor:</span><select name="picor"><option value="">ninguno</option><option value="leve">(+) leve</option><option value="moderado">(++) moderado</option><option value="severo">(+++) severo</option></select></div>
+              <div class="caract-item"><span>Dolor:</span><select name="dolor"><option value="">ninguno</option><option value="leve">(+) leve</option><option value="moderado">(++) moderado</option><option value="severo">(+++) severo</option></select></div>
             </div>
           </div>
         </div>
@@ -811,11 +817,19 @@ function setRegions(v) {
 })();
 
 /* Resaltar en rojo+negrita las etiquetas de los campos cuyo valor cambió
- * respecto a la ficha anterior. `keys` son keys del schema de las entities. */
+ * respecto a la ficha anterior. Acepta un array de keys, o un objeto
+ * { key: valorAnterior } — en ese caso el label muestra "Valor anterior: …"
+ * al hacer hover. `keys` son keys del schema de las entities. */
 function markChanges(keys) {
   const form = document.getElementById('ficha-aps');
-  form.querySelectorAll('.lbl-changed').forEach(e => e.classList.remove('lbl-changed'));
-  if (!Array.isArray(keys)) return;
+  form.querySelectorAll('.lbl-changed').forEach(e => {
+    e.classList.remove('lbl-changed');
+    if (e.dataset.prevTitle !== undefined) { e.removeAttribute('title'); delete e.dataset.prevTitle; }
+  });
+  if (!keys) return;
+  const prevMap = Array.isArray(keys) ? null : keys;
+  keys = Array.isArray(keys) ? keys : Object.keys(keys);
+  if (!keys.length) return;
 
   const groupRep = {
     sexo: 'sexo_M', etnia: 'etnia_mestiza',
@@ -841,7 +855,16 @@ function markChanges(keys) {
     let el = form.elements[name];
     if (el && el.length) el = el[0];   // RadioNodeList → first node
     const lbl = labelFor(el);
-    if (lbl) lbl.classList.add('lbl-changed');
+    if (!lbl) return;
+    lbl.classList.add('lbl-changed');
+    if (prevMap) {
+      const pv = prevMap[k];
+      const txt = (pv === null || pv === undefined || pv === '' || pv === false)
+        ? '(vacío)'
+        : (pv === true ? 'Sí' : String(pv));
+      lbl.setAttribute('title', 'Valor anterior: ' + txt);
+      lbl.dataset.prevTitle = '1';
+    }
   });
 }
 

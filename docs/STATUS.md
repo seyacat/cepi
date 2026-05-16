@@ -281,3 +281,22 @@ exportar [anonimizado]   → descarga JSON
 - §5 Diagnóstico: campo `icd_search` — autocompletado ICD-11 (OMS) también
   en el formulario del bot (`IcdSearchField.vue`), no sólo en `ficha.html`.
 - `picor`/`dolor` y `escolaridad_grado` → picklists.
+
+### Correcciones de ficha, formularios y UX móvil
+
+- **Bot — formularios**: `proximo_control_fecha` con date picker; al guardar la
+  ficha completa (`ficha_save`) los campos vacíos ya no sobrescriben datos
+  guardados; botón "Omitir" reubicado al lado opuesto de "Guardar" para evitar
+  clicks accidentales.
+- **Bot — flujo de ficha**: `firstIncompleteFichaGroup()` — al activar/crear un
+  paciente el bot arranca en el primer grupo incompleto y omite los ya
+  completos (no vuelve a pedir, p.ej., datos de contacto ya cargados).
+- **Pacientes**: se crean con `title = "Nombre Apellidos"` (antes
+  `paciente_<cédula>`), así son ubicables por nombre en TodoERP.
+- **Riel de bookmarks (móvil)**: la lupa funciona con touchmove y selecciona al
+  levantar el dedo; el chat deja padding por el riel; el nombre del paciente no
+  queda bajo el botón burger.
+- **Header**: el semáforo A/B/C se refresca tras guardar un formulario.
+- **Ficha (`ficha.html`)**: edad autocalculada desde fecha de nacimiento;
+  selects de Picor/Dolor con tipografía uniforme y opciones (+)/(++)/(+++);
+  los labels en rojo muestran "Valor anterior: …" al hover.

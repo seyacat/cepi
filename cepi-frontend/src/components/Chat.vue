@@ -82,7 +82,7 @@
 
     <section
       class="main"
-      :class="{ 'drag-over': dragOver }"
+      :class="{ 'drag-over': dragOver, 'has-rail': bookmarks.length }"
       @dragover.prevent="dragOver = true"
       @dragleave.prevent="dragOver = false"
       @drop.prevent="onDrop"
@@ -115,6 +115,10 @@
         @mouseenter="cacheRail"
         @mousemove="onRailMove"
         @mouseleave="onRailLeave"
+        @touchstart.prevent="onRailTouchStart"
+        @touchmove.prevent="onRailTouchMove"
+        @touchend.prevent="onRailTouchEnd"
+        @touchcancel="onRailLeave"
       >
         <template v-for="(grp, gi) in bookmarkGroups" :key="'g' + gi">
           <div v-if="grp.category" class="bookmark-cat">{{ grp.category }}</div>
@@ -394,7 +398,8 @@ async function onFichaLoad() {
   try {
     const cur = fichaEpisodes.value[fichaIndex.value]?.data || {};
     const prev = fichaEpisodes.value[fichaIndex.value + 1]?.data;
-    const changed = [];
+    // Map of changed key → previous value (shown on label hover).
+    const changed = {};
     if (prev) {
       const SKIP = new Set([
         'id', 'fecha', 'medico_id', 'patient_id', 'estado', 'tipo',
@@ -406,7 +411,7 @@ async function onFichaLoad() {
       const keys = new Set([...Object.keys(cur), ...Object.keys(prev)]);
       for (const k of keys) {
         if (SKIP.has(k) || k.includes(':')) continue;
-        if (norm(cur[k]) !== norm(prev[k])) changed.push(k);
+        if (norm(cur[k]) !== norm(prev[k])) changed[k] = prev[k];
       }
     }
     frame.contentWindow.markChanges?.(changed);
@@ -474,11 +479,11 @@ function railPush(h, d) {
   return push;
 }
 
-function onRailMove(e) {
+function magnifyAt(clientY) {
   if (!railEl.value) return;
   if (!railItems.length) cacheRail();
   const rect = railEl.value.getBoundingClientRect();   // one rect read per move
-  const y = e.clientY - rect.top;
+  const y = clientY - rect.top;
   let idx = railItems.findIndex(it => y >= it.top && y < it.top + it.h);
   if (idx < 0) idx = y < 0 ? 0 : railItems.length - 1;
   if (idx === railCenter) return;                      // cursor still in same tab
@@ -502,9 +507,29 @@ function onRailMove(e) {
   });
 }
 
+function onRailMove(e) { magnifyAt(e.clientY); }
+
 function onRailLeave() {
   railItems.forEach(it => { it.el.style.transform = ''; it.el.style.zIndex = ''; });
   railCenter = -1;
+}
+
+// Touch: drag a finger along the rail to magnify (Dock-style), lift to select
+// the tab currently under the finger. preventDefault stops the page scrolling
+// while dragging and suppresses the synthetic click after touchend.
+function onRailTouchStart(e) {
+  cacheRail();
+  if (e.touches.length) magnifyAt(e.touches[0].clientY);
+}
+function onRailTouchMove(e) {
+  if (e.touches.length) magnifyAt(e.touches[0].clientY);
+}
+function onRailTouchEnd() {
+  const it = railCenter >= 0 ? railItems[railCenter] : null;
+  if (it && it.el.classList.contains('bookmark-tab') && !it.el.disabled) {
+    it.el.click();                                   // → openBookmark(bm)
+  }
+  onRailLeave();
 }
 
 // Set the §5 diagnosis letter on the active episode (optimistic + persisted).
@@ -584,6 +609,13 @@ async function send(message, opts = {}) {
     // turns leave it in place so it persists until filled.
     if (r && 'form' in r) botForm.value = r.form || null;
     if (r && 'bookmarks' in r) bookmarks.value = Array.isArray(r.bookmarks) ? r.bookmarks : [];
+    // A form submission may have changed the §5 diagnosis severity — refresh
+    // the header traffic-light from the (now-updated) episode entity.
+    if (fs && activeEpisode.value) {
+      fetchEntity(activeEpisode.value)
+        .then(e => { diagnosticoLetra.value = e?.data?.diagnostico_letra || ''; })
+        .catch(() => {});
+    }
     if (r?.download && r.download.content) {
       const blob = new Blob([r.download.content], { type: r.download.content_type || 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
@@ -822,6 +854,12 @@ watch(sessionId, () => { refreshSessions(); });
   .chat-wrap.side-open .side { transform: translateX(0); }
   .chat-wrap.side-open .side-backdrop { display: block; }
   .main { border-radius: 0; border-left: 0; border-right: 0; }
+  /* Leave room for the bookmark rail (its default tucked width) so the chat
+     content is never hidden behind it. */
+  .main.has-rail .scroll-area,
+  .main.has-rail .composer { padding-left: 40px; }
+  /* Keep the patient name clear of the burger button (38px @ left:8px). */
+  .patient-bar { padding-left: 52px; }
 }
 .side {
   background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px;
