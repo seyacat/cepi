@@ -50,6 +50,12 @@
         <EntitySearchField :field="f" :busy="busy" @select="$emit('send', $event)" />
       </div>
 
+      <!-- ICD-11 (OMS) diagnosis autocomplete. -->
+      <div v-else-if="f.type === 'icd_search'" class="bot-form-field">
+        <label>{{ f.label }}<span v-if="f.required" class="bf-req">*</span></label>
+        <IcdSearchField :field="f" :busy="busy" v-model="values[f.key]" />
+      </div>
+
       <!-- Plain text (default). -->
       <div v-else class="bot-form-field">
         <label :for="`bf-${form.id}-${f.key}`">
@@ -58,7 +64,7 @@
         <input
           :id="`bf-${form.id}-${f.key}`"
           v-model="values[f.key]"
-          type="text"
+          :type="f.type === 'date' ? 'date' : 'text'"
           :placeholder="f.placeholder || ''"
           :disabled="busy"
           autocomplete="off"
@@ -90,6 +96,7 @@
 <script setup>
 import { reactive, computed } from 'vue';
 import EntitySearchField from './EntitySearchField.vue';
+import IcdSearchField from './IcdSearchField.vue';
 
 const props = defineProps({
   form: { type: Object, required: true },
@@ -119,11 +126,11 @@ function normOptions(f) {
 
 const isStructured = computed(() => props.form.submit_mode === 'structured');
 
-// A "closed" form — every field is a single-choice radio. Picking an option
-// submits immediately (no Guardar button).
+// A "closed" form — exactly one single-choice radio field. Picking an option
+// submits immediately (no Guardar). Multi-field grouped forms keep Guardar.
 const autoSubmit = computed(() =>
-  isStructured.value && DATA_FIELDS.length > 0 &&
-  DATA_FIELDS.every(f => f.type === 'radio'),
+  isStructured.value && DATA_FIELDS.length === 1 &&
+  DATA_FIELDS[0].type === 'radio',
 );
 
 function onRadioPick() {

@@ -18,7 +18,7 @@ export interface BotFormField {
   /** Omitted for decorative `heading` fields. */
   key?: string;
   label: string;
-  type?: 'text' | 'textarea' | 'checkbox' | 'radio' | 'heading' | 'entity_search';
+  type?: 'text' | 'textarea' | 'checkbox' | 'radio' | 'heading' | 'entity_search' | 'icd_search' | 'date';
   placeholder?: string;
   required?: boolean;
   /** `radio` only — the available choices. */
@@ -144,9 +144,10 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   { category: 'Filiación', target: 'patient', field: { key: 'sector_ciudad', label: 'Sector / Ciudad', type: 'text' } },
   { category: 'Filiación', target: 'patient', field: { key: 'ocupacion', label: 'Ocupación', type: 'text' } },
   { category: 'Filiación', target: 'patient', field: { key: 'email', label: 'Correo', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'fecha_nac', label: 'Fecha de nacimiento', type: 'date' } },
   { category: 'Filiación', target: 'patient', field: { key: 'sexo', label: 'Sexo', type: 'radio', options: ['M', 'F', 'Otro'] } },
   { category: 'Filiación', target: 'patient', field: { key: 'etnia', label: 'Etnia', type: 'radio', options: ['mestiza', 'blanco', 'afro', 'otra'] } },
-  { category: 'Filiación', target: 'patient', field: { key: 'escolaridad_grado', label: 'Escolaridad (grado)', type: 'text' } },
+  { category: 'Filiación', target: 'patient', field: { key: 'escolaridad_grado', label: 'Escolaridad', type: 'radio', options: ['ninguna', 'básico', 'superior', 'tercer nivel', 'cuarto nivel'] } },
   { category: 'Filiación', target: 'patient', field: { key: 'condicion_socioeconomica', label: 'Condición socioeconómica', type: 'radio', options: ['alto', 'medio', 'bajo'] } },
   // §2 Antecedentes (paciente)
   { category: 'Antecedentes', target: 'patient', field: { key: 'antecedentes_personales_presente', label: '¿Antecedentes personales?', type: 'radio', options: SI_NO } },
@@ -212,7 +213,7 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   ] as BotFormField[]).map(field => ({ category: 'Examen físico', target: 'episode' as const, field })),
   // §5 Diagnóstico (episodio)
   ...([
-  { key: 'diagnostico', label: 'Diagnóstico', type: 'text' },
+  { key: 'diagnostico', label: 'Diagnóstico (ICD-11 OMS)', type: 'icd_search' },
   { key: 'diagnostico_letra', label: 'Semáforo A/B/C', type: 'radio', options: ['A', 'B', 'C'] },
   ] as BotFormField[]).map(field => ({ category: 'Diagnóstico', target: 'episode' as const, field })),
   // §6 Estudios (episodio)
@@ -229,13 +230,44 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   ] as BotFormField[]).map(field => ({ category: 'Tratamiento', target: 'episode' as const, field })),
 ];
 
-/** Cada campo de la ficha es su propio grupo → su bookmark + formulario atómico. */
-export const FICHA_GROUPS: FichaGroup[] = FICHA_FIELD_DEFS.map(d => ({
-  id: d.field.key as string,
-  label: d.field.label,
-  category: d.category,
-  target: d.target,
-  fields: [d.field],
+/** La ficha se agrupa por sección/subsección: un formulario por grupo. */
+const byKey: Record<string, FichaFieldDef> =
+  Object.fromEntries(FICHA_FIELD_DEFS.map(d => [d.field.key as string, d]));
+
+// Un grupo = un ítem numerado de la ficha (1.1, 1.2, … 3.1, 3.2 …),
+// no la sección entera. La categoría (§) sigue agrupando el riel.
+const FICHA_GROUP_SPEC: { id: string; label: string; keys: string[] }[] = [
+  { id: 'g_1_1', label: '1.1 Datos de contacto',     keys: ['direccion','telefono','sector_ciudad','ocupacion','email'] },
+  { id: 'g_1_2', label: '1.2 Fecha de nacimiento',   keys: ['fecha_nac'] },
+  { id: 'g_1_3', label: '1.3 Sexo',                  keys: ['sexo'] },
+  { id: 'g_1_4', label: '1.4 Etnia',                 keys: ['etnia'] },
+  { id: 'g_1_5', label: '1.5 Escolaridad',           keys: ['escolaridad_grado'] },
+  { id: 'g_1_6', label: '1.6 Condición socioeconómica', keys: ['condicion_socioeconomica'] },
+  { id: 'g_2_1', label: '2.1 Antecedentes personales',  keys: ['antecedentes_personales_presente','antecedentes_personales'] },
+  { id: 'g_2_2', label: '2.2 Antecedentes familiares',  keys: ['antecedentes_familiares_presente','antecedentes_familiares'] },
+  { id: 'g_3_1', label: '3.1 Motivo de consulta',     keys: ['motivo_consulta','anamnesis'] },
+  { id: 'g_3_2', label: '3.2 Tiempo de evolución',    keys: ['tiempo_evolucion'] },
+  { id: 'g_3_3', label: '3.3 Curso',                  keys: ['curso'] },
+  { id: 'g_3_4', label: '3.4 Síntomas',               keys: ['sintomas_presente','picor','dolor'] },
+  { id: 'g_3_5', label: '3.5 Causa aparente',         keys: ['causa_aparente_presente','causa_aparente'] },
+  { id: 'g_3_6', label: '3.6 Patología asociada / RAS', keys: ['patologia_asociada_presente','patologia_asociada'] },
+  { id: 'g_3_7', label: '3.7 Tratamientos previos',   keys: ['tratamientos_previos_presente','tratamientos_previos'] },
+  { id: 'g_4_1', label: '4.1 Lesión elemental',       keys: ['lesion_macula','lesion_papula','lesion_placa','lesion_vesicula','lesion_ampolla','lesion_tumor','lesion_nodulo','lesion_ulcera','lesion_otra'] },
+  { id: 'g_4_2', label: '4.2 Características',         keys: ['caract_eritema','caract_descamacion','caract_exudacion','caract_liquenificacion','caract_otra'] },
+  { id: 'g_4_3', label: '4.3 Topografía',             keys: ['topo_unica','topo_multiples','topo_bilateral','topo_simetrico','topo_confluente','topo_agrupadas','topo_circular','topo_lineal','topo_borde','topo_otra'] },
+  { id: 'g_4_4', label: '4.4 Gravedad',               keys: ['gravedad_extension','gravedad_intensidad','gravedad_funcionalidad'] },
+  { id: 'g_4_5', label: '4.5 Patrón',                 keys: ['patron_inflam_epidermica','patron_inflam_dermica','patron_necrosis','patron_tumor','patron_color','notas_examen'] },
+  { id: 'g_5',   label: '5 Diagnóstico',              keys: ['diagnostico','diagnostico_letra'] },
+  { id: 'g_6',   label: '6 Estudios complementarios', keys: ['estudios_complementarios_presente','estudios_complementarios_resumen'] },
+  { id: 'g_7',   label: '7 Tratamiento y plan',       keys: ['tratamiento_resumen','plan','proximo_control_fecha','proximo_control_motivo'] },
+];
+
+export const FICHA_GROUPS: FichaGroup[] = FICHA_GROUP_SPEC.map(g => ({
+  id: g.id,
+  label: g.label,
+  category: byKey[g.keys[0]].category,
+  target: byKey[g.keys[0]].target,
+  fields: g.keys.map(k => byKey[k].field),
 }));
 
 export const FICHA_FIRST_GROUP = FICHA_GROUPS[0].id;
@@ -597,6 +629,8 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
       const data: Record<string, unknown> = { ...(sub.data || {}) };
       const isPatient = grp?.target === 'patient';
       const targetId = isPatient ? session.active_patient_id : session.active_episode_id;
+      // Numeric column — coerce the text input before persisting.
+      if (data.edad != null && data.edad !== '') data.edad = Number(data.edad);
       if (!isPatient) {
         const gKeys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
         for (const k of gKeys) {
@@ -613,6 +647,14 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
           } catch { /* skip total */ }
         }
       }
+      // Human-readable record of what the form submitted — written into chat.
+      const fmt = (v: unknown) => v === true ? 'Sí' : v === false ? 'No' : String(v);
+      const summaryLines = (grp?.fields || [])
+        .filter(f => f.key && data[f.key] !== undefined && data[f.key] !== null && data[f.key] !== '')
+        .map(f => `  • ${f.label}: ${fmt(data[f.key!])}`);
+      const summary = `📋 ${grp?.label || 'Formulario'}\n` +
+        (summaryLines.length ? summaryLines.join('\n') : '  (sin datos)');
+
       if (targetId && Object.keys(data).length) {
         const upd = await mcp.call('entities.update', {
           id: targetId, record_type: 'business', data,
@@ -620,7 +662,7 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
         if (!(upd as any)?.ok) {
           const text = `No pude guardar: ${(upd as any)?.error || 'error desconocido'}.\n` +
             `Revisá los datos y volvé a enviar.`;
-          await appendAndSave(session, message, text, mcp);
+          await appendAndSave(session, summary, text, mcp);
           return { text, form: await fichaGroupFormFilled(gid, mcp, session), bookmarks: await fichaBookmarks(mcp, session) };
         }
         if (isPatient) {
@@ -639,11 +681,11 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
         const form = (await fichaGroupFormFilled(nid, mcp, session))!;
         setSlot(session, 'ficha_current', nid);
         const text = `Guardado. Siguiente: ${form.title}.`;
-        await appendAndSave(session, message, text, mcp);
+        await appendAndSave(session, summary, text, mcp);
         return { text, form, bookmarks: await fichaBookmarks(mcp, session) };
       }
       const text = 'Ficha completa. Podés revisar cualquier sección desde los marcadores.';
-      await appendAndSave(session, message, text, mcp);
+      await appendAndSave(session, summary, text, mcp);
       return { text, form: null, bookmarks: await fichaBookmarks(mcp, session) };
     }
 

@@ -927,7 +927,7 @@ watch(sessionId, () => { refreshSessions(); });
   position: absolute;
   left: 0;
   top: 56px;
-  bottom: 4%;           /* taller rail → each tab ~20% taller */
+  bottom: 20%;          /* shorter rail → each tab ~20% shorter */
   z-index: 15;
   width: 40px;
   display: flex;

@@ -266,3 +266,18 @@ exportar [anonimizado]   → descarga JSON
 - Ficha §4.4: `gravedad_total` (E+I+F) autocalculado, mostrado como
   "<n> Leve|Moderada|Grave".
 - §5 Diagnóstico: autocompletado contra ICD-11 (OMS) en `ficha.html`.
+
+### Ficha por ítems numerados + ajustes
+
+- Los grupos/bookmarks de la ficha son los ítems numerados (1.1, 1.2, 3.1…),
+  no las secciones — 23 grupos (`FICHA_GROUP_SPEC` en `flowV1.ts`).
+- Riel de bookmarks: anclado a la derecha, ancho = largo del texto, lupa
+  tipo Dock (5 elementos, optimizada con translateX/translateY).
+- Formularios cerrados de una sola pregunta auto-envían; los agrupados
+  conservan Guardar.
+- Al enviar un formulario, el turno del usuario en el chat queda con el
+  resumen (label: valor de cada campo).
+- §1.2: Fecha de nacimiento (date picker `type:date`); la edad se autocalcula.
+- §5 Diagnóstico: campo `icd_search` — autocompletado ICD-11 (OMS) también
+  en el formulario del bot (`IcdSearchField.vue`), no sólo en `ficha.html`.
+- `picor`/`dolor` y `escolaridad_grado` → picklists.
