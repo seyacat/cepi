@@ -320,8 +320,11 @@ exportar [anonimizado]   → descarga JSON
     episodio y paciente.
 - **§8 Imágenes Consentimiento**: grupo `g_8`; almacena cada imagen como un
   registro `consent` (`tipo: 'imagen_clinica'`) vinculado al paciente.
-- Ambos grupos de imágenes pasan por el confirmation gate vía
-  `pending_action.batch` (una creación por imagen, auditada en chatter).
+- Ambos grupos escriben los registros **directo al enviar el formulario**,
+  como el resto de la ficha — sin confirmation gate: el envío del formulario
+  ya es la acción explícita del usuario (no es una escritura inferida por el
+  agente). El gate sí/no queda sólo para escrituras que el agente infiere de
+  texto libre o de un comando.
 - **cepi-isic**: nuevo endpoint real (no stub) `POST /inspect` — Pillow para
   dimensiones/brillo, OpenCV para rostro; dependencia `opencv-python-headless`.
 

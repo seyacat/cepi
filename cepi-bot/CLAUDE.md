@@ -14,10 +14,14 @@ The bot is **stateless logic + persisted session**. The HTTP server
    cerrar episodio, /diagnostico, /escalar, casos similares, ver paciente,
    ver episodio, nota, ver chatter, recordatorios, completar/cancelar/snooze
    reminder, resumen, /help.
-3. For sensitive writes (entities.create, entities.update, request_review),
+3. For **agent/LLM-initiated** sensitive writes (entities.create,
+   entities.update, request_review inferred from free text or a command),
    a **confirmation gate**: the action is staged into
    `session.pending_action`, the user replies sí/no, and the bot executes
-   on confirm.
+   on confirm. This does NOT apply to **ficha form submits**: sending a
+   structured ficha form (`ficha_grp_*`, including the §4.7/§8 image
+   uploads) is already an explicit user action, so it writes directly —
+   no extra sí/no card.
 4. Anything else falls through to the **LLM adapter** (`src/llm.ts`),
    which is either the keyword-routing stub (default) or DeepSeek via
    `CEPI_LLM_PROVIDER=deepseek`. The agent loop (`src/agent.ts`) lets the
@@ -28,7 +32,9 @@ The bot is **stateless logic + persisted session**. The HTTP server
 
 ## Invariants
 
-- The agent never writes to the DB without the user's explicit confirmation.
+- The agent never writes to the DB off its own free-text/command inference
+  without explicit confirmation. A ficha form submit IS that explicit
+  action and writes directly (no gate).
 - Every successful confirmation leaves a chatter audit note.
 - `bot_session` lives in TodoERP like any other record (entity_definition
   17000000-…); it has no special storage path.

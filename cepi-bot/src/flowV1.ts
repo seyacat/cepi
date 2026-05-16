@@ -507,14 +507,15 @@ function parseAttachmentCsv(v: unknown): string[] {
  *
  * §4.7 — for each uploaded attachment: inspect via cepi-isic (quality + face).
  *   Inadequate images are skipped (reported in chat); images with a face are
- *   flagged `privada`. Adequate images are staged as clinical_image creates
- *   (embedding_status:'pending', linked to episode + patient) behind the
- *   confirmation gate. The clinicalImageProcessor worker does ISIC after.
- * §8 — each uploaded attachment is staged as a consent record (tipo:
+ *   flagged `privada`. Adequate images become clinical_image records
+ *   (embedding_status:'pending', linked to episode + patient). The
+ *   clinicalImageProcessor worker does ISIC after.
+ * §8 — each uploaded attachment becomes a consent record (tipo:
  *   'imagen_clinica') linked to the patient. No quality/face/ISIC checks.
  *
- * Both stage a `pending_action` (batch) so the writes pass the confirmation
- * gate (PAPER §13.3.1). Returns a FlowResponse with `pending_action_set`.
+ * Like every other ficha group, the records are written directly on submit:
+ * sending the ficha form is itself the user's explicit action, so no extra
+ * sí/no confirmation gate is interposed.
  */
 async function handleImageGroupSubmit(
   gid: 'g_4_7' | 'g_8',
@@ -526,25 +527,28 @@ async function handleImageGroupSubmit(
   const key = gid === 'g_4_7' ? 'imagenes_lesion' : 'imagen_consentimiento';
   const attachmentIds = parseAttachmentCsv(data[key]);
   const grp = FICHA_GROUPS.find(g => g.id === gid);
+  const summary = `📋 ${grp?.label || ''}`;
 
   if (!attachmentIds.length) {
     const text = 'No subiste ninguna imagen. Elegí al menos un archivo y volvé a guardar.';
-    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+    await appendAndSave(session, summary, text, mcp);
     return { text, form: fichaGroupForm(gid), bookmarks: await fichaBookmarks(mcp, session) };
   }
 
-  // ── §8 — consentimiento: store + link to patient, nothing else. ──
+  // Build the create payloads (per group), collecting per-image chat notes.
+  const notes: string[] = [];
+  const creates: Array<{ title: string; data: Record<string, unknown> }> = [];
+  let entityId = '';
+
   if (gid === 'g_8') {
     if (!session.active_patient_id) {
       const text = 'Necesito un paciente activo para registrar el consentimiento.';
-      await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
+      await appendAndSave(session, summary, text, mcp);
       return { text };
     }
-    const batch = attachmentIds.map(aid => ({
-      tool: 'entities.create',
-      args: {
-        record_type: 'business',
-        entity_id: CONSENT_ENTITY_ID,
+    entityId = CONSENT_ENTITY_ID;
+    for (const aid of attachmentIds) {
+      creates.push({
         title: `consent_imagen_${aid.slice(0, 8)}`,
         data: {
           [`${PATIENT_ENTITY_ID}:patient_id`]: session.active_patient_id,
@@ -553,50 +557,28 @@ async function handleImageGroupSubmit(
           documento: aid,
           firmado_at: new Date().toISOString().slice(0, 10),
         },
-      },
-    }));
-    session.pending_action = {
-      summary: `Registrar ${batch.length} consentimiento(s) de imagen para el paciente ${session.active_patient_id}`,
-      tool: 'entities.create',
-      args: {},
-      batch,
-      successMessage: `Listo. Registré {{count}} consentimiento(s) de imagen ligado(s) al paciente.`,
-      createdAt: new Date().toISOString(),
-    };
-    const text =
-      `Voy a registrar ${batch.length} imagen(es) de consentimiento ligadas al paciente activo.\n\n` +
-      `¿Confirmas? (sí / no)`;
-    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
-    return { text, pending_action_set: true, bookmarks: await fichaBookmarks(mcp, session) };
-  }
-
-  // ── §4.7 — lesión: inspect each image, then stage the good ones. ──
-  if (!session.active_episode_id || !session.active_patient_id) {
-    const text = 'Necesito un paciente y un episodio activos para registrar imágenes de la lesión.';
-    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
-    return { text };
-  }
-
-  const notes: string[] = [];
-  const batch: Array<{ tool: string; args: Record<string, unknown> }> = [];
-  for (const aid of attachmentIds) {
-    const r = await inspectAttachment(aid, mcp);
-    const short = aid.slice(0, 8);
-    if (!r.adequate) {
-      const why = r.reasons.length ? r.reasons.join('; ') : (r.error || 'no apta');
-      notes.push(`  • Imagen ${short}… descartada — ${why}. Subí otra.`);
-      continue;
+      });
     }
-    if (r.has_face) {
-      notes.push(`  • Imagen ${short}… contiene un rostro — la marqué como privada.`);
-    } else {
-      notes.push(`  • Imagen ${short}… apta (${r.width}×${r.height}px).`);
+  } else {
+    // §4.7 — lesión: inspect each image, then keep the adequate ones.
+    if (!session.active_episode_id || !session.active_patient_id) {
+      const text = 'Necesito un paciente y un episodio activos para registrar imágenes de la lesión.';
+      await appendAndSave(session, summary, text, mcp);
+      return { text };
     }
-    batch.push({
-      tool: 'entities.create',
-      args: {
-        record_type: 'business',
-        entity_id: CLINICAL_IMAGE_ENTITY_ID,
+    entityId = CLINICAL_IMAGE_ENTITY_ID;
+    for (const aid of attachmentIds) {
+      const r = await inspectAttachment(aid, mcp);
+      const short = aid.slice(0, 8);
+      if (!r.adequate) {
+        const why = r.reasons.length ? r.reasons.join('; ') : (r.error || 'no apta');
+        notes.push(`  • Imagen ${short}… descartada — ${why}. Subí otra.`);
+        continue;
+      }
+      notes.push(r.has_face
+        ? `  • Imagen ${short}… contiene un rostro — la marqué como privada.`
+        : `  • Imagen ${short}… apta (${r.width}×${r.height}px).`);
+      creates.push({
         title: `clinical_image_${short}`,
         data: {
           [`${EPISODE_ENTITY_ID}:episode_id`]: session.active_episode_id,
@@ -608,33 +590,51 @@ async function handleImageGroupSubmit(
           embedding_status: 'pending',
           privada: !!r.has_face,
         },
-      },
+      });
+    }
+    if (!creates.length) {
+      const text = `Ninguna de las imágenes pasó el control de calidad:\n${notes.join('\n')}`;
+      await appendAndSave(session, summary, text, mcp);
+      return { text, form: fichaGroupForm(gid), bookmarks: await fichaBookmarks(mcp, session) };
+    }
+  }
+
+  // Write the records directly (no confirmation gate — see header).
+  let ok = 0;
+  const errs: string[] = [];
+  for (const c of creates) {
+    const r = await mcp.call('entities.create', {
+      record_type: 'business', entity_id: entityId, title: c.title, data: c.data,
     });
+    if ((r as any)?.ok) ok++;
+    else errs.push((r as any)?.error || 'error desconocido');
   }
 
-  if (!batch.length) {
-    const text =
-      `Ninguna de las imágenes pasó el control de calidad:\n${notes.join('\n')}`;
-    await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
-    return { text, form: fichaGroupForm(gid), bookmarks: await fichaBookmarks(mcp, session) };
-  }
+  const head = gid === 'g_8'
+    ? `Registré ${ok} imagen(es) de consentimiento ligada(s) al paciente.`
+    : `Registré ${ok} imagen(es) clínica(s) ligada(s) al episodio y al paciente ` +
+      `(el worker ISIC las clasificará en breve).`;
+  const lines = [
+    notes.length ? `Revisé las imágenes:\n${notes.join('\n')}` : '',
+    head,
+    errs.length ? `⚠️ ${errs.length} no se pudo(eron) guardar: ${errs.join('; ')}.` : '',
+  ].filter(Boolean);
 
-  session.pending_action = {
-    summary: `Registrar ${batch.length} imagen(es) de lesión ligadas al episodio ${session.active_episode_id}`,
-    tool: 'entities.create',
-    args: {},
-    batch,
-    successMessage:
-      `Listo. Registré {{count}} imagen(es) clínica(s) ligada(s) al episodio y al paciente. ` +
-      `El worker ISIC las clasificará en breve.`,
-    createdAt: new Date().toISOString(),
-  };
-  const text =
-    `Revisé las imágenes:\n${notes.join('\n')}\n\n` +
-    `Voy a registrar ${batch.length} imagen(es) clínica(s) (clasificación ISIC automática). ` +
-    `¿Confirmas? (sí / no)`;
-  await appendAndSave(session, `📋 ${grp?.label || ''}`, text, mcp);
-  return { text, pending_action_set: true, bookmarks: await fichaBookmarks(mcp, session) };
+  // Mark the group done and advance to the next incomplete one.
+  const doneArr: string[] = ((session.extracted_slots as any)?.ficha_done as string[]) || [];
+  if (!doneArr.includes(gid)) doneArr.push(gid);
+  setSlot(session, 'ficha_done', doneArr);
+  const nid = await nextIncompleteFichaGroupId(gid, mcp, session);
+  if (nid) {
+    const form = (await fichaGroupFormFilled(nid, mcp, session))!;
+    setSlot(session, 'ficha_current', nid);
+    const text = `${lines.join('\n\n')}\n\nSiguiente: ${form.title}.`;
+    await appendAndSave(session, summary, text, mcp);
+    return { text, form, bookmarks: await fichaBookmarks(mcp, session) };
+  }
+  const text = `${lines.join('\n\n')}\n\nFicha completa. Revisá lo que quieras desde los marcadores.`;
+  await appendAndSave(session, summary, text, mcp);
+  return { text, form: null, bookmarks: await fichaBookmarks(mcp, session) };
 }
 
 /**

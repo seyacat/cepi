@@ -5,8 +5,8 @@
  * and a stubbed cepi-isic /inspect endpoint (via global.fetch). Verifies:
  *   - the new groups appear in FICHA_GROUP_SPEC, in the right position
  *   - §4.7 inspects each image, skips inadequate ones, flags faces private
- *   - §8 stages a consent record per image, no inspection
- *   - both stage a batch pending_action behind the confirmation gate
+ *   - §8 creates a consent record per image, no inspection
+ *   - both write the records directly on submit (no confirmation gate)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { handleV1Flow, FICHA_GROUPS } from '../src/flowV1.js';
@@ -78,7 +78,7 @@ describe('§4.7 Imágenes Lesión submit', () => {
     }));
   }
 
-  it('stages a clinical_image batch for adequate images and flags faces private', async () => {
+  it('creates clinical_image records for adequate images and flags faces private', async () => {
     stubInspect({
       'aaaaaaaa-0000-0000-0000-000000000001': { adequate: true, width: 800, height: 600, has_face: false },
       'aaaaaaaa-0000-0000-0000-000000000002': { adequate: true, width: 800, height: 600, has_face: true },
@@ -96,21 +96,21 @@ describe('§4.7 Imágenes Lesión submit', () => {
       },
     });
     expect(res).not.toBeNull();
-    expect(session.pending_action).not.toBeNull();
-    const batch = session.pending_action!.batch!;
-    expect(batch.length).toBe(2);
-    for (const step of batch) {
-      expect(step.tool).toBe('entities.create');
-      expect(step.args.entity_id).toBe(CLINICAL_IMAGE_ENTITY_ID);
-      expect((step.args.data as any).embedding_status).toBe('pending');
-      expect((step.args.data as any).field_key).toBe('lesion');
+    // Written directly on submit — no confirmation gate.
+    expect(session.pending_action).toBeNull();
+    const creates = mcp.calls.filter((c: any) => c.name === 'entities.create');
+    expect(creates.length).toBe(2);
+    for (const c of creates) {
+      expect(c.args.entity_id).toBe(CLINICAL_IMAGE_ENTITY_ID);
+      expect(c.args.data.embedding_status).toBe('pending');
+      expect(c.args.data.field_key).toBe('lesion');
       // linked to both episode and patient
-      expect((step.args.data as any)['12000000-0000-0000-0000-000000000000:episode_id']).toBe('ep-1');
-      expect((step.args.data as any)['11000000-0000-0000-0000-000000000000:patient_id']).toBe('pat-1');
+      expect(c.args.data['12000000-0000-0000-0000-000000000000:episode_id']).toBe('ep-1');
+      expect(c.args.data['11000000-0000-0000-0000-000000000000:patient_id']).toBe('pat-1');
     }
     // second image had a face → privada true
-    expect((batch[1].args.data as any).privada).toBe(true);
-    expect((batch[0].args.data as any).privada).toBe(false);
+    expect(creates[1].args.data.privada).toBe(true);
+    expect(creates[0].args.data.privada).toBe(false);
     expect(res!.text).toMatch(/privada/i);
   });
 
@@ -132,7 +132,8 @@ describe('§4.7 Imágenes Lesión submit', () => {
         },
       },
     });
-    expect(session.pending_action!.batch!.length).toBe(1);
+    const creates = mcp.calls.filter((c: any) => c.name === 'entities.create');
+    expect(creates.length).toBe(1);
     expect(res!.text).toMatch(/sobreexpuesta|descartada/i);
   });
 
@@ -156,7 +157,7 @@ describe('§4.7 Imágenes Lesión submit', () => {
 });
 
 describe('§8 Imágenes Consentimiento submit', () => {
-  it('stages a consent batch linked to the patient, no inspection', async () => {
+  it('creates a consent record linked to the patient, no inspection', async () => {
     const mcp = fakeMcp();
     const session = fichaSession();
     const res = await handleV1Flow({
@@ -167,15 +168,14 @@ describe('§8 Imágenes Consentimiento submit', () => {
       },
     });
     expect(res).not.toBeNull();
-    expect(session.pending_action).not.toBeNull();
-    const batch = session.pending_action!.batch!;
-    expect(batch.length).toBe(1);
-    expect(batch[0].args.entity_id).toBe(CONSENT_ENTITY_ID);
-    expect((batch[0].args.data as any).tipo).toBe('imagen_clinica');
-    expect((batch[0].args.data as any)['11000000-0000-0000-0000-000000000000:patient_id']).toBe('pat-1');
-    expect((batch[0].args.data as any).documento).toBe('dddddddd-0000-0000-0000-000000000001');
-    // no /inspect call should have been made
-    expect(mcp.calls.every((c: any) => c.name !== 'fetch')).toBe(true);
+    // Written directly on submit — no confirmation gate.
+    expect(session.pending_action).toBeNull();
+    const creates = mcp.calls.filter((c: any) => c.name === 'entities.create');
+    expect(creates.length).toBe(1);
+    expect(creates[0].args.entity_id).toBe(CONSENT_ENTITY_ID);
+    expect(creates[0].args.data.tipo).toBe('imagen_clinica');
+    expect(creates[0].args.data['11000000-0000-0000-0000-000000000000:patient_id']).toBe('pat-1');
+    expect(creates[0].args.data.documento).toBe('dddddddd-0000-0000-0000-000000000001');
   });
 
   it('rejects an empty submission', async () => {

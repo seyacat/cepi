@@ -27,7 +27,7 @@ mantienen activamente. La capa medical vive en `cepi-bot` + `cepi-frontend`.
 
 - **Paper-first**: cambios estructurales pasan primero por `docs/PAPER.md`. El plan de fases del paper §15 manda.
 - **TodoERP genérico, cepi medical**: `TodoERP/` no debe contener vocabulario clínico. Si una capacidad parece útil para más de un dominio, vive en TodoERP. La opt-in al pipeline médico se hace con `CEPI_MEDICAL=1` en el backend.
-- **Confirmation gate**: ninguna escritura clínica se persiste sin confirmación explícita del usuario (PAPER §13.3.1, D-Aux-1). El patrón vive en `cepi-bot/src/server.ts` (pending_action).
+- **Confirmation gate**: las escrituras que el agente *infiere* de texto libre o de un comando se confirman con sí/no antes de persistir (PAPER §13.3.1, D-Aux-1). El patrón vive en `cepi-bot/src/server.ts` (pending_action). Los **envíos de formularios de la ficha** (`ficha_grp_*`, incluidas las imágenes §4.7/§8) ya son una acción explícita del usuario: se guardan directo, sin gate.
 - **PII**: campos con `pii: true` en `entity_definitions.config.fields` se redactan al cruzar dos fronteras: `cepi-bot → LLM` (PAPER §13.3.1) y `TodoERP → role sin pii:read:<slug>` (R4 de REFACTOR_PLAN). Ambas implementadas.
 - **Tests verde antes de commit**: `npx vitest run` en `TodoERP/backend` y `cepi-bot`. Total actual ~202 tests.
 - **Git**: el subm `TodoERP/` tiene su propio remote (`seyacat/TodoERP`); el cepi raíz lo apunta por SHA. Hay una rama feature por concern (`feat/generic-fase1` en TodoERP, `feat/medical-assistant` en cepi).
