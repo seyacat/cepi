@@ -38,8 +38,9 @@ let svcJwt: { token: string; exp: number } | null = null;
 
 /**
  * Return a valid service-account JWT, logging in to TodoERP when missing or
- * within 60s of expiry. Returns '' when no service credentials are configured
- * (the caller then falls back to CEPI_GUEST_API_KEY).
+ * within 60s of expiry. This is the ADMIN bot account used only to resolve /
+ * link chat identities — it is NOT the identity messages act with. Returns ''
+ * when no service credentials are configured.
  */
 async function getServiceJwt(): Promise<string> {
   const email = process.env.TELEGRAM_BOT_EMAIL || process.env.WHATSAPP_BOT_EMAIL;
@@ -66,6 +67,62 @@ async function getServiceJwt(): Promise<string> {
   } catch (e: any) {
     console.error('[telegram] service login failed:', e?.message || e);
     return '';
+  }
+}
+
+/** chat_id → JWT of the registered user acting in this chat. */
+const chatAuth = new Map<number, string>();
+
+type ResolveResult =
+  | { ok: true; jwt: string }
+  | { ok: false; reason: 'unregistered' | 'error' };
+
+/**
+ * Resolve the TodoERP user linked to a chat identity and return a JWT to act
+ * AS that user (their real role/permissions). Uses the admin service account
+ * to call the resolve endpoint. `unregistered` ⇒ no user linked to this id.
+ */
+async function resolveUserAuth(platform: string, externalId: string | number): Promise<ResolveResult> {
+  const adminJwt = await getServiceJwt();
+  if (!adminJwt) {
+    console.error('[telegram] no service account configured to resolve identity');
+    return { ok: false, reason: 'error' };
+  }
+  const base = process.env.TODOERP_API_URL || 'http://localhost:3001';
+  try {
+    const r = await fetch(`${base}/api/auth/external/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', authorization: `Bearer ${adminJwt}` },
+      body: JSON.stringify({ platform, external_id: String(externalId) }),
+    });
+    if (r.status === 404) return { ok: false, reason: 'unregistered' };
+    if (!r.ok) { console.error('[telegram] resolve failed', r.status); return { ok: false, reason: 'error' }; }
+    const data: any = await r.json().catch(() => ({}));
+    return data?.token ? { ok: true, jwt: data.token } : { ok: false, reason: 'error' };
+  } catch (e: any) {
+    console.error('[telegram] resolve error:', e?.message || e);
+    return { ok: false, reason: 'error' };
+  }
+}
+
+/** Link a chat id to a user (admin only — enforced by the endpoint). */
+async function linkExternal(
+  actingJwt: string, platform: string, externalId: string | number, email: string,
+): Promise<'ok' | 'forbidden' | 'user_not_found' | 'error'> {
+  const base = process.env.TODOERP_API_URL || 'http://localhost:3001';
+  try {
+    const r = await fetch(`${base}/api/auth/external/link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', authorization: `Bearer ${actingJwt}` },
+      body: JSON.stringify({ platform, external_id: String(externalId), email }),
+    });
+    if (r.status === 403) return 'forbidden';
+    if (r.status === 404) return 'user_not_found';
+    if (!r.ok) return 'error';
+    return 'ok';
+  } catch (e: any) {
+    console.error('[telegram] link error:', e?.message || e);
+    return 'error';
   }
 }
 
@@ -324,22 +381,56 @@ function isNewChat(chatId: number): boolean {
   return seen === undefined || (Date.now() - seen) > IDLE_MS;
 }
 
+/**
+ * Resolve the acting user for an inbound chat. Returns their JWT, or sends the
+ * appropriate message (not-registered with their id, or a transient error) and
+ * returns null so the caller stops.
+ */
+async function authorizeChat(chatId: number, fromId: number): Promise<string | null> {
+  const auth = await resolveUserAuth('telegram', fromId);
+  if (auth.ok) { chatAuth.set(chatId, auth.jwt); return auth.jwt; }
+  if (auth.reason === 'unregistered') {
+    await sendTelegramText(chatId,
+      `🔒 No estás registrado para usar este bot.\n\n` +
+      `Tu ID de Telegram es: ${fromId}\n` +
+      `Pasáselo al administrador para que te dé acceso.`);
+  } else {
+    await sendTelegramText(chatId, 'No pude validar tu identidad ahora mismo. Probá de nuevo en un rato.');
+  }
+  return null;
+}
+
 /** Process one inbound message object from the webhook update. */
 async function handleInbound(invokeChat: InvokeChat, message: any): Promise<void> {
   const chatId = message?.chat?.id;
   if (typeof chatId !== 'number') return;
+  const fromId = message?.from?.id;
+  if (typeof fromId !== 'number') return;
 
-  // After 5 min idle (or on first contact) treat it as a new chat: show the
-  // menu and don't route this message — the user picks an option via buttons.
+  // Identity gate: every inbound is acted on AS the linked TodoERP user.
+  const jwt = await authorizeChat(chatId, fromId);
+  if (!jwt) return;
+
+  // Admin linking command: "vincular telegram <id> <email>".
+  const linkCmd = String(message?.text || '').trim()
+    .match(/^\/?\s*vincular\s+telegram\s+(\d+)\s+(\S+@\S+)\s*$/i);
+  if (linkCmd) {
+    const r = await linkExternal(jwt, 'telegram', linkCmd[1], linkCmd[2]);
+    const msg = r === 'ok' ? `✅ Vinculé el ID ${linkCmd[1]} con ${linkCmd[2]}.`
+      : r === 'forbidden' ? 'No tenés permiso para vincular usuarios.'
+      : r === 'user_not_found' ? `No encontré un usuario con email ${linkCmd[2]}.`
+      : 'No pude completar la vinculación.';
+    await sendTelegramText(chatId, msg);
+    return;
+  }
+
+  // After 5 min idle (or on first contact) treat it as a new chat: show the menu.
   const fresh = isNewChat(chatId);
   touch(chatId);
   if (fresh) {
     await sendWelcomeMenu(chatId);
     return;
   }
-
-  const jwt = await getServiceJwt();
-  const apiKey = process.env.CEPI_GUEST_API_KEY || '';
 
   // An image arrives as `photo`/`document`; its text (if any) is in `caption`.
   const hasImage = (Array.isArray(message?.photo) && message.photo.length)
@@ -354,11 +445,6 @@ async function handleInbound(invokeChat: InvokeChat, message: any): Promise<void
 
   let imageToken: string | null | '' = '';
   if (hasImage) {
-    if (!jwt) {
-      // Attachments require a JWT identity; the api-key fallback can't upload.
-      await sendTelegramText(chatId, 'No puedo guardar imágenes: falta la cuenta de servicio (TELEGRAM_BOT_EMAIL/PASSWORD).');
-      return;
-    }
     imageToken = await resolveImageToken(message, jwt);
     if (imageToken === null) {
       await sendTelegramText(chatId, 'No pude procesar la imagen. Probá de nuevo.');
@@ -374,7 +460,7 @@ async function handleInbound(invokeChat: InvokeChat, message: any): Promise<void
     return;
   }
 
-  await routeTurn(invokeChat, chatId, turnText, jwt, apiKey);
+  await routeTurn(invokeChat, chatId, turnText, jwt, '');
 }
 
 /**
@@ -485,11 +571,9 @@ async function submitWalk(invokeChat: InvokeChat, chatId: number): Promise<void>
   const w = formWalks.get(chatId);
   if (!w) return;
   formWalks.delete(chatId);
-  const jwt = await getServiceJwt();
-  const apiKey = process.env.CEPI_GUEST_API_KEY || '';
+  const jwt = chatAuth.get(chatId) || '';
   const headers: Record<string, string> = {};
   if (jwt) headers['authorization'] = `Bearer ${jwt}`;
-  else if (apiKey) headers['x-api-key'] = apiKey;
   const sessionId = chatSessions.get(chatId) || undefined;
 
   let body: any;
@@ -513,6 +597,12 @@ async function handleCallback(invokeChat: InvokeChat, cq: any): Promise<void> {
   await answerCallback(cq?.id);
   const chatId = cq?.message?.chat?.id;
   if (typeof chatId !== 'number') return;
+  const fromId = cq?.from?.id;
+  if (typeof fromId !== 'number') return;
+
+  // Identity gate (sets chatAuth for any walk submit triggered below).
+  const jwt = await authorizeChat(chatId, fromId);
+  if (!jwt) return;
   touch(chatId);
   const data = cq?.data;
 
@@ -538,9 +628,7 @@ async function handleCallback(invokeChat: InvokeChat, cq: any): Promise<void> {
   }
   const send = mapped || data;
   if (typeof send !== 'string' || !send.trim()) return;
-  const jwt = await getServiceJwt();
-  const apiKey = process.env.CEPI_GUEST_API_KEY || '';
-  await routeTurn(invokeChat, chatId, send, jwt, apiKey);
+  await routeTurn(invokeChat, chatId, send, jwt, '');
 }
 
 /**
