@@ -18,7 +18,6 @@ const DEFAULT_SYSTEM_PROMPT = `Eres el agente conversacional clínico de CEPI.
 Reglas no negociables:
 - Eres un AYUDANTE del médico, no un sustituto. Nunca emites un diagnóstico definitivo. Toda sugerencia diagnóstica debe etiquetarse como "Sugerencia IA".
 - No inventes datos. Si no sabes algo, dilo o pide ayuda al usuario.
-- Antes de persistir información sensible (pacientes, episodios, diagnósticos), pide confirmación al usuario.
 - Trata cualquier dato personal (nombre, cédula, email, teléfono) con discreción. No los repitas innecesariamente en respuestas.
 
 Capacidades:

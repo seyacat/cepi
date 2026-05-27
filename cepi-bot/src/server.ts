@@ -27,6 +27,7 @@ import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID, BotSess
 import {
   handleV1Flow, fichaGroupFormFilled, firstIncompleteFichaGroup,
   nextIncompleteFichaGroupId, fichaGroupIsComplete, fichaBookmarks, BotForm,
+  FICHA_GROUPS,
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
 import { listEpisodeImagesWithClassifications, CLINICAL_IMAGE_ENTITY_ID, HAM_TO_ICD } from './episodeImages.js';
@@ -264,6 +265,167 @@ app.get('/api/bot/episode-images', async (req: Request, res: Response, next: Nex
   }
 });
 
+/**
+ * One-line status used by non-UI channels (e.g. Telegram) as the first line of
+ * every reply: the active patient's name, or — when there's no patient — a
+ * human-readable description of the chat state. Derived from the session's
+ * extracted_slots; returns '' when there's no session.
+ */
+function computeStatusHeader(session: BotSession | null): string {
+  if (!session) return '';
+  const slots: any = session.extracted_slots || {};
+  const pc = slots.patient_context;
+  if (session.active_patient_id && pc) {
+    const name = [pc.nombre, pc.apellidos].filter(Boolean).join(' ').trim()
+      || session.active_patient_id.slice(0, 8);
+    if (slots.mode === 'patient_info') return `👤 ${name} (consulta de información)`;
+    if (slots.form_state?.kind === 'ficha') {
+      const g = FICHA_GROUPS.find(x => x.id === slots.ficha_current);
+      return g ? `👤 ${name} — ficha §${g.label}` : `👤 ${name} — ficha`;
+    }
+    return `👤 ${name}`;
+  }
+  // No active patient → describe the chat state.
+  const formTitle: string = slots.active_form?.title || '';
+  if (/buscar paciente/i.test(formTitle)) return '📋 Buscando paciente';
+  if (/nuevo paciente/i.test(formTitle)) return '📋 Creando paciente';
+  if (slots.mode === 'general') return '📋 Modo general (sin paciente)';
+  return '📋 Sin paciente activo';
+}
+
+/**
+ * Confirmation gate toggle. Historically every agent-inferred sensitive write
+ * was staged into `session.pending_action` and required a sí/no from the user
+ * (PAPER §13.3.1). That gate is now OFF by default: inferred writes execute
+ * immediately. The real concern is *showing* sensitive data, which is handled
+ * by the PII redaction layer (redact.ts), not by gating writes. Set
+ * CEPI_CONFIRM_GATE=1 to bring the old sí/no gate back.
+ */
+const CONFIRM_GATE_ENABLED = process.env.CEPI_CONFIRM_GATE === '1';
+
+/** Consent entity (PAPER §8 image-consent records). Mirrors flowV1's constant. */
+const CONSENT_ENTITY_ID = '18000000-0000-0000-0000-000000000000';
+
+/**
+ * Execute the session's staged `pending_action` now (the work the old "sí"
+ * confirmation used to do): run the tool call(s), write the chatter audit note,
+ * auto-activate newly created patient/episode entities, clear the action, and
+ * return the response payload to send. Shared by the explicit confirm path and
+ * by the auto-confirm that fires when the gate is disabled.
+ */
+async function executePendingActionResult(
+  session: BotSession, mcp: TodoErpMcpClient, message: string, sessionId: string | null,
+): Promise<any> {
+  const pa = session.pending_action as any;
+
+  // Multi-step (batch) pending action — run every step in order.
+  if (Array.isArray(pa.batch) && pa.batch.length) {
+    const ids: string[] = [];
+    const errs: string[] = [];
+    const batchCalls: any[] = [];
+    for (const step of pa.batch) {
+      const r = await mcp.call(step.tool, step.args);
+      batchCalls.push({ name: step.tool, args: step.args, result: r });
+      if ((r as any)?.ok) {
+        const nid = (r as any)?.data?.id || '';
+        if (nid) {
+          ids.push(nid);
+          await mcp.call('chatter.add_note', {
+            entity_id: nid,
+            body: `🤖 Acción ejecutada por el agente: \`${step.tool}\` — ${pa.summary}`,
+          }).catch(() => {});
+        }
+      } else {
+        errs.push((r as any)?.error || 'error');
+      }
+    }
+    const ackText = errs.length
+      ? `${pa.successMessage.replace(/\{\{count\}\}/g, String(ids.length))}` +
+        ` (con ${errs.length} error(es): ${errs.join('; ')})`
+      : pa.successMessage.replace(/\{\{count\}\}/g, String(ids.length));
+    session.pending_action = null;
+    session.turns = [
+      ...session.turns,
+      { role: 'user',      content: message },
+      { role: 'assistant', content: ackText },
+    ];
+    await saveSession(mcp, session);
+    return {
+      ok: true, session_id: sessionId, text: ackText,
+      history: session.turns, toolCalls: batchCalls,
+      active_patient_id: session.active_patient_id,
+      active_episode_id: session.active_episode_id,
+      bookmarks: ((session.extracted_slots as any)?.form_state?.kind === 'ficha')
+        ? await fichaBookmarks(mcp, session) : undefined,
+    };
+  }
+
+  const result = await mcp.call(pa.tool, pa.args);
+  const newId  = result.ok ? (result.data?.id || '') : '';
+  const ackText = result.ok
+    ? pa.successMessage.replace(/\{\{id\}\}/g, newId)
+    : `No pude completar la acción: ${result.error}`;
+
+  // PAPER §13.3 — audit: every successful tool call leaves a chatter note.
+  if (result.ok) {
+    const targetForNote =
+      (pa.tool === 'entities.create' && newId) ? newId :
+      (pa.tool === 'entities.update' && (pa.args as any)?.id) ? (pa.args as any).id :
+      (pa.tool === 'entities.request_review' && (pa.args as any)?.entity_id) ? (pa.args as any).entity_id :
+      null;
+    if (targetForNote) {
+      await mcp.call('chatter.add_note', {
+        entity_id: targetForNote,
+        body: `🤖 Acción ejecutada por el agente: \`${pa.tool}\` — ${pa.summary}`,
+      }).catch(() => {});
+    }
+  }
+
+  // Auto-activate newly created clinical entities so the user can keep working.
+  let extraForm: BotForm | null = null;
+  if (result.ok && pa.tool === 'entities.create' && newId) {
+    const createdType = (pa.args as any)?.entity_id;
+    if (createdType === '11000000-0000-0000-0000-000000000000') {
+      session.active_patient_id = newId;
+      if ((session.extracted_slots as any)?.mode !== 'patient_info') {
+        const episodeId = await openEpisodeFicha(mcp, session, newId);
+        session.active_episode_id = episodeId;
+        const firstGroup = await firstIncompleteFichaGroup(mcp, session);
+        extraForm = firstGroup
+          ? await fichaGroupFormFilled(firstGroup, mcp, session)
+          : null;
+        session.extracted_slots = {
+          ...(session.extracted_slots || {}),
+          mode: 'patient',
+          form_state: { kind: 'ficha' },
+          ficha_done: [],
+          ...(firstGroup ? { ficha_current: firstGroup } : {}),
+          active_form: extraForm,
+        };
+      }
+    } else if (createdType === '12000000-0000-0000-0000-000000000000') {
+      session.active_episode_id = newId;
+    }
+  }
+  session.pending_action = null;
+  session.turns = [
+    ...session.turns,
+    { role: 'user',      content: message },
+    { role: 'assistant', content: ackText },
+  ];
+  await saveSession(mcp, session);
+  return {
+    ok: true, session_id: sessionId, text: ackText,
+    history: session.turns,
+    toolCalls: [{ name: pa.tool, args: pa.args, result }],
+    active_patient_id: session.active_patient_id,
+    active_episode_id: session.active_episode_id,
+    form: extraForm,
+    bookmarks: ((session.extracted_slots as any)?.form_state?.kind === 'ficha')
+      ? await fichaBookmarks(mcp, session) : undefined,
+  };
+}
+
 const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
   let mcp: TodoErpMcpClient | null = null;
   try {
@@ -286,6 +448,20 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       return res.status(401).json({ ok: false, error: 'Missing JWT or API key (and no CEPI_GUEST_API_KEY configured)' });
     }
 
+    // Enrich every JSON reply with `status_header` (active patient name / chat
+    // state) for non-UI channels, computed from the live in-memory session.
+    // Done once here so the handler's many early `res.json(...)` returns all
+    // get it without duplicating the logic at each return site.
+    let sessionForHeader: BotSession | null = null;
+    const _json = res.json.bind(res);
+    (res as any).json = (payload: any) => {
+      if (payload && typeof payload === 'object'
+          && payload.status_header === undefined && payload.session_id) {
+        payload.status_header = computeStatusHeader(sessionForHeader);
+      }
+      return _json(payload);
+    };
+
     // Two input modes:
     //   - history:  full transcript (caller manages state itself)
     //   - session_id + message: server loads session, appends, persists
@@ -307,6 +483,7 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         session = await createSession(mcp, userId);
       }
       sessionId = session.id;
+      sessionForHeader = session;   // mutated in place by the flow below
 
       // ── slash-style state commands handled server-side, no LLM needed ──
       const trimmed = message.trim();
@@ -512,118 +689,7 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       const confirmNo  = /^\s*(no|cancelar|cancel|abort)\s*$/i;
       if (session.pending_action) {
         if (confirmYes.test(message.trim())) {
-          const pa = session.pending_action;
-
-          // ── Multi-step (batch) pending action — run every step in order.
-          // Used by the image-upload ficha groups (one create per image).
-          if (Array.isArray(pa.batch) && pa.batch.length) {
-            const ids: string[] = [];
-            const errs: string[] = [];
-            const batchCalls: any[] = [];
-            for (const step of pa.batch) {
-              const r = await mcp.call(step.tool, step.args);
-              batchCalls.push({ name: step.tool, args: step.args, result: r });
-              if ((r as any)?.ok) {
-                const nid = (r as any)?.data?.id || '';
-                if (nid) {
-                  ids.push(nid);
-                  await mcp.call('chatter.add_note', {
-                    entity_id: nid,
-                    body: `🤖 Acción ejecutada por el agente: \`${step.tool}\` — ${pa.summary}`,
-                  }).catch(() => {});
-                }
-              } else {
-                errs.push((r as any)?.error || 'error');
-              }
-            }
-            const ackText = errs.length
-              ? `${pa.successMessage.replace(/\{\{count\}\}/g, String(ids.length))}` +
-                ` (con ${errs.length} error(es): ${errs.join('; ')})`
-              : pa.successMessage.replace(/\{\{count\}\}/g, String(ids.length));
-            session.pending_action = null;
-            session.turns = [
-              ...session.turns,
-              { role: 'user',      content: message },
-              { role: 'assistant', content: ackText },
-            ];
-            await saveSession(mcp, session);
-            return res.json({
-              ok: true, session_id: sessionId, text: ackText,
-              history: session.turns, toolCalls: batchCalls,
-              active_patient_id: session.active_patient_id,
-              active_episode_id: session.active_episode_id,
-              bookmarks: ((session.extracted_slots as any)?.form_state?.kind === 'ficha')
-                ? await fichaBookmarks(mcp, session) : undefined,
-            });
-          }
-
-          const result = await mcp.call(pa.tool, pa.args);
-          const newId  = result.ok ? (result.data?.id || '') : '';
-          const ackText = result.ok
-            ? pa.successMessage.replace(/\{\{id\}\}/g, newId)
-            : `No pude completar la acción: ${result.error}`;
-
-          // PAPER §13.3 — audit: every successful tool call by the bot
-          // leaves a chatter note on the affected entity (best-effort).
-          if (result.ok) {
-            const targetForNote =
-              (pa.tool === 'entities.create' && newId) ? newId :
-              (pa.tool === 'entities.update' && (pa.args as any)?.id) ? (pa.args as any).id :
-              (pa.tool === 'entities.request_review' && (pa.args as any)?.entity_id) ? (pa.args as any).entity_id :
-              null;
-            if (targetForNote) {
-              await mcp.call('chatter.add_note', {
-                entity_id: targetForNote,
-                body: `🤖 Acción ejecutada por el agente: \`${pa.tool}\` — ${pa.summary}`,
-              }).catch(() => {});
-            }
-          }
-
-          // Convenience: auto-activate newly created clinical entities so the
-          // user can keep working without typing UUIDs back at the bot.
-          let extraForm: BotForm | null = null;
-          if (result.ok && pa.tool === 'entities.create' && newId) {
-            const createdType = (pa.args as any)?.entity_id;
-            if (createdType === '11000000-0000-0000-0000-000000000000') {
-              session.active_patient_id = newId;
-              // In atención mode, open a new episode and start the ficha.
-              if ((session.extracted_slots as any)?.mode !== 'patient_info') {
-                const episodeId = await openEpisodeFicha(mcp, session, newId);
-                session.active_episode_id = episodeId;
-                const firstGroup = await firstIncompleteFichaGroup(mcp, session);
-                extraForm = firstGroup
-                  ? await fichaGroupFormFilled(firstGroup, mcp, session)
-                  : null;
-                session.extracted_slots = {
-                  ...(session.extracted_slots || {}),
-                  mode: 'patient',
-                  form_state: { kind: 'ficha' },
-                  ficha_done: [],
-                  ...(firstGroup ? { ficha_current: firstGroup } : {}),
-                  active_form: extraForm,
-                };
-              }
-            } else if (createdType === '12000000-0000-0000-0000-000000000000') {
-              session.active_episode_id = newId;
-            }
-          }
-          session.pending_action = null;
-          session.turns = [
-            ...session.turns,
-            { role: 'user',      content: message },
-            { role: 'assistant', content: ackText },
-          ];
-          await saveSession(mcp, session);
-          return res.json({
-            ok: true, session_id: sessionId, text: ackText,
-            history: session.turns,
-            toolCalls: [{ name: pa.tool, args: pa.args, result }],
-            active_patient_id: session.active_patient_id,
-            active_episode_id: session.active_episode_id,
-            form: extraForm,
-            bookmarks: ((session.extracted_slots as any)?.form_state?.kind === 'ficha')
-              ? await fichaBookmarks(mcp, session) : undefined,
-          });
+          return res.json(await executePendingActionResult(session, mcp, message, sessionId));
         }
         if (confirmNo.test(message.trim())) {
           session.pending_action = null;
@@ -652,6 +718,11 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       {
         const v1 = await handleV1Flow({ session, message, mcp, formSubmission });
         if (v1) {
+          // A flow that staged a pending_action (e.g. /nuevo-paciente): with the
+          // gate disabled, execute it now instead of asking sí/no.
+          if (!CONFIRM_GATE_ENABLED && session.pending_action) {
+            return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+          }
           // session was already mutated + saved by handleV1Flow.
           // Persist the active form on the session so it survives reloads
           // and conversation switches (the form stays until it's filled).
@@ -880,6 +951,9 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           successMessage: `Signos vitales guardados.`,
           createdAt: new Date().toISOString(),
         };
+        if (!CONFIRM_GATE_ENABLED) {
+          return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        }
         const ackText =
           `Voy a registrar:\n` +
           Object.entries(sv).map(([k, v]) => `  • ${k}: ${v}`).join('\n') +
@@ -1085,6 +1159,9 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           successMessage: `Diagnóstico presuntivo guardado (id: {{id}}, CIE-10: ${codigo}).`,
           createdAt: new Date().toISOString(),
         };
+        if (!CONFIRM_GATE_ENABLED) {
+          return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        }
         const ackText =
           `Voy a crear un diagnóstico presuntivo:\n` +
           `  • episodio: ${activeEpisodeId}\n` +
@@ -1123,6 +1200,9 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           successMessage: `Episodio escalado. Recordatorio creado para el reviewer.`,
           createdAt: new Date().toISOString(),
         };
+        if (!CONFIRM_GATE_ENABLED) {
+          return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        }
         const ackText =
           `Voy a escalar el episodio ${activeEpisodeId}.\n` +
           `  • reviewer: ${reviewer}\n` +
@@ -1173,6 +1253,9 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
             : `Episodio cerrado.`,
           createdAt: new Date().toISOString(),
         };
+        if (!CONFIRM_GATE_ENABLED) {
+          return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        }
         const ackText =
           `Voy a cerrar el episodio ${activeEpisodeId}.\n` +
           (proxFecha
@@ -1233,6 +1316,9 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           successMessage: `Episodio creado (id: {{id}}). Lo activo automáticamente; puedes ya subir imágenes.`,
           createdAt: new Date().toISOString(),
         };
+        if (!CONFIRM_GATE_ENABLED) {
+          return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        }
         const ackText =
           `Voy a crear un episodio:\n` +
           `  • paciente: ${activePatientId}\n` +
@@ -1255,38 +1341,90 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         });
       }
 
-      // ── Auto-stage clinical_image creation behind confirmation gate ──
+      // ── Image classification answer: lesión vs consentimiento ──
+      // Resolves the pending image saved when the user uploaded it. The choice
+      // IS the explicit user action, so we write directly (no sí/no gate).
+      const imgKind = message.trim().match(/^\/?\s*imagen\s+(lesi[oó]n|consentimiento)\s*$/i);
+      const pendingImage = (session.extracted_slots as any)?.pending_image;
+      if (imgKind && pendingImage?.attachment_id) {
+        const isConsent = /consent/i.test(imgKind[1]);
+        const aid  = pendingImage.attachment_id as string;
+        const name = (pendingImage.name as string) || aid.slice(0, 8);
+        // Clear the pending image regardless of outcome.
+        const slots = { ...(session.extracted_slots || {}) };
+        delete (slots as any).pending_image;
+        session.extracted_slots = slots;
+
+        if (isConsent) {
+          if (!activePatientId) {
+            const ackText = 'Necesito un paciente activo para registrar el consentimiento.';
+            session.turns = [...session.turns,
+              { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+            await saveSession(mcp, session);
+            return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+              toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+          }
+          session.pending_action = {
+            summary: `Crear consent (imagen) para paciente ${activePatientId}`,
+            tool: 'entities.create',
+            args: {
+              record_type: 'business',
+              entity_id:   CONSENT_ENTITY_ID,
+              title:       `consent_imagen_${aid.slice(0, 8)}`,
+              data: {
+                [`${PATIENT_ENTITY_ID}:patient_id`]: activePatientId,
+                tipo: 'imagen_clinica',
+                version: 'imagen-subida',
+                documento: aid,
+                firmado_at: new Date().toISOString().slice(0, 10),
+              },
+            },
+            successMessage: 'Imagen registrada como consentimiento del paciente.',
+            createdAt: new Date().toISOString(),
+          };
+        } else {
+          if (!activeEpisodeId) {
+            const ackText = 'Necesito un episodio activo para registrar la imagen de la lesión.';
+            session.turns = [...session.turns,
+              { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+            await saveSession(mcp, session);
+            return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+              toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+          }
+          session.pending_action = {
+            summary: `Crear clinical_image '${name}' ligada al episodio ${activeEpisodeId}`,
+            tool: 'entities.create',
+            args: {
+              record_type: 'business',
+              entity_id:   CLINICAL_IMAGE_ENTITY_ID,
+              title:       `clinical_image_${name}`,
+              data: {
+                ['12000000-0000-0000-0000-000000000000:episode_id']: activeEpisodeId,
+                [`${PATIENT_ENTITY_ID}:patient_id`]: activePatientId,
+                attachment_id: aid,
+                field_key:     'lesion',
+                consentimiento_uso_imagen: true,
+                embedding_status: 'pending',
+              },
+            },
+            successMessage: 'Imagen registrada como imagen de lesión ligada al episodio.',
+            createdAt: new Date().toISOString(),
+          };
+        }
+        return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+      }
+
+      // ── Image uploaded: ask whether it's a lesion image or a consent form ──
+      // (No sí/no gate; the lesion/consent choice is the explicit action.)
       const attachMatch = message.match(/\[adjunto:\s*([^·]+)·\s*([0-9a-f-]{36})\s*\]/i);
-      if (attachMatch && activePatientId && activeEpisodeId) {
+      if (attachMatch && activePatientId) {
         const fileName     = attachMatch[1].trim();
         const attachmentId = attachMatch[2];
-        session.pending_action = {
-          summary: `Crear clinical_image '${fileName}' ligada al episodio ${activeEpisodeId}`,
-          tool: 'entities.create',
-          args: {
-            record_type: 'business',
-            entity_id:   '16000000-0000-0000-0000-000000000000',
-            title:       `clinical_image_${fileName}`,
-            data: {
-              ['12000000-0000-0000-0000-000000000000:episode_id']: activeEpisodeId,
-              ['11000000-0000-0000-0000-000000000000:patient_id']: activePatientId,
-              attachment_id: attachmentId,
-              field_key:     'lesion',
-              consentimiento_uso_imagen: true,
-              embedding_status: 'pending',
-            },
-          },
-          successMessage: `Imagen registrada como clinical_image (id: {{id}}) ligada al episodio activo.`,
-          createdAt: new Date().toISOString(),
+        session.extracted_slots = {
+          ...(session.extracted_slots || {}),
+          pending_image: { attachment_id: attachmentId, name: fileName },
         };
-        const ackText =
-          `Voy a crear una imagen clínica con estos datos:\n` +
-          `  • episodio: ${activeEpisodeId}\n` +
-          `  • paciente: ${activePatientId}\n` +
-          `  • attachment: ${attachmentId}\n` +
-          `  • field_key: lesion\n` +
-          `  • consentimiento_uso_imagen: true\n\n` +
-          `¿Confirmas? (sí / no)`;
+        const ackText = '¿Esta imagen es de la lesión o un formulario de consentimiento?';
         session.turns = [
           ...session.turns,
           { role: 'user',      content: message },
@@ -1298,6 +1436,10 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           history: session.turns, toolCalls: [],
           active_patient_id: activePatientId,
           active_episode_id: activeEpisodeId,
+          quick_replies: [
+            { label: '🔬 Imagen de lesión', send: 'imagen lesion' },
+            { label: '📄 Consentimiento',   send: 'imagen consentimiento' },
+          ],
         });
       }
 
@@ -1330,13 +1472,16 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         await saveSession(mcp, session);
         activePatientId = session.active_patient_id;
         activeEpisodeId = session.active_episode_id;
+        sessionForHeader = session;
       }
     }
 
     let pendingAction: any = null;
+    let statusHeader = '';
     if (sessionId && mcp) {
       const finalSession = await loadSession(mcp, sessionId);
       pendingAction = finalSession?.pending_action || null;
+      statusHeader = computeStatusHeader(finalSession);
     }
 
     res.json({
@@ -1345,6 +1490,7 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       active_patient_id: activePatientId,
       active_episode_id: activeEpisodeId,
       pending_action: pendingAction,
+      status_header: statusHeader,
       ...out,
     });
   } catch (err) { next(err); }

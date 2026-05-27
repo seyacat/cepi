@@ -757,6 +757,13 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
     return { text, form: PATIENT_SEARCH_FORM };
   }
 
+  if (mode === 'unset' && /^\s*\/?\s*(nuevo\s+paciente|crear\s+paciente)\s*$/i.test(trimmed)) {
+    setSlot(session, 'mode', 'patient');
+    const text = 'Completá los datos del nuevo paciente.';
+    await appendAndSave(session, message, text, mcp);
+    return { text, form: PATIENT_NEW_FORM };
+  }
+
   // ── unset mode: the frontend hardcodes the mode question + buttons in
   //    the welcome screen, so we don't ask it from the bot. We assume
   //    "general" by default and fall through to the rest of the pipeline.
