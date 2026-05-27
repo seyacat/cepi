@@ -1411,7 +1411,25 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
             createdAt: new Date().toISOString(),
           };
         }
-        return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        const payload = await executePendingActionResult(session, mcp, message, sessionId);
+        // Take the initiative: keep the ficha moving by asking the next pending
+        // section instead of stopping at "imagen registrada".
+        if ((session.extracted_slots as any)?.form_state?.kind === 'ficha') {
+          const nextGroup = await firstIncompleteFichaGroup(mcp, session);
+          const nextForm = nextGroup ? await fichaGroupFormFilled(nextGroup, mcp, session) : null;
+          session.extracted_slots = {
+            ...(session.extracted_slots || {}),
+            ...(nextGroup ? { ficha_current: nextGroup } : {}),
+            active_form: nextForm,
+          };
+          await saveSession(mcp, session);
+          payload.form = nextForm;
+          payload.text = nextForm
+            ? `${payload.text}\n\nSigamos con la ficha:`
+            : `${payload.text}\n\nLa ficha está completa. ¿Necesitás algo más?`;
+          payload.bookmarks = await fichaBookmarks(mcp, session);
+        }
+        return res.json(payload);
       }
 
       // ── Image uploaded: ask whether it's a lesion image or a consent form ──

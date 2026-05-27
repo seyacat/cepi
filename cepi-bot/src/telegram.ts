@@ -407,7 +407,16 @@ async function handleCallback(invokeChat: InvokeChat, cq: any): Promise<void> {
   const chatId = cq?.message?.chat?.id;
   if (typeof chatId !== 'number') return;
   touch(chatId);
-  const send = callbackSends.get(cq?.data) || cq?.data;
+  const data = cq?.data;
+  const mapped = callbackSends.get(data);
+  // A bare internal id (q<n>) that isn't in the map is a stale button — its
+  // mapping was lost (e.g. the bot restarted). Re-show the menu instead of
+  // forwarding "q6" to the brain.
+  if (mapped === undefined && typeof data === 'string' && /^q[0-9a-z]+$/.test(data)) {
+    await sendWelcomeMenu(chatId);
+    return;
+  }
+  const send = mapped || data;
   if (typeof send !== 'string' || !send.trim()) return;
   const jwt = await getServiceJwt();
   const apiKey = process.env.CEPI_GUEST_API_KEY || '';
