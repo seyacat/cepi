@@ -44,6 +44,18 @@ echo "[reset-cepi] step 2: medical seeds"
 bash "$TODOERP/database/medical-seed/apply.sh"
 
 if [ "$WITH_FAKE" = "1" ]; then
+  # The synthetic seeder writes into per-type shadow tables (entity_classifications,
+  # entity_icd10_code, ...) which the backend creates on startup via
+  # reconcileTablesOnStartup() — they do NOT exist right after the SQL seeds.
+  # Restart the backend so it provisions them before the seeder runs.
+  if command -v pm2 >/dev/null 2>&1 && pm2 describe todoerp-backend >/dev/null 2>&1; then
+    echo "[reset-cepi] restarting backend to provision shadow tables"
+    pm2 restart todoerp-backend >/dev/null 2>&1
+    sleep 7
+  else
+    echo "[reset-cepi] WARNING: pm2 todoerp-backend not found — ensure the backend"
+    echo "[reset-cepi]          restarts to create shadow tables before seeding."
+  fi
   echo "[reset-cepi] step 3: synthetic clinical dataset"
   bash "$TODOERP/database/medical-seed/seeder/run.sh"
 fi

@@ -41,9 +41,8 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         VITE_API_URL: 'http://localhost:3001',
-        // Servido bajo /erp/ para poder exponerlo por el túnel ngrok junto al
-        // resto (path routing en el Vite de cepi-frontend).
-        VITE_BASE: '/erp/',
+        // El ERP se sirve en raíz '/' en :5173 (acceso directo local). NO se
+        // expone por el túnel ngrok — ver ngrok.yml. Por eso no lleva VITE_BASE.
       },
       max_memory_restart: '500M',
     },

@@ -4,6 +4,32 @@ Estado del proyecto al cierre de la sesión actual.
 
 ---
 
+## Sesión 2026-05-27 — permisos, identidad externa, reset y ERP
+
+- **Permisos: un bundle por rol.** `medical-seed/002` ahora seedea un único
+  registro de permiso por rol (`paciente_perms`, `medico_perms`,
+  `supermedico_perms`, `admin_clinical_extras`, `guest_clinical`) con
+  `data.permissions` como mapa plano; `flattenPermissionRows` lo expande. Se
+  eliminaron los seeds granulares flotantes (`seeds/004,006,007,008`). De ~40
+  registros a 7.
+- **Tests se autolimpian.** `createTestUser` marca los permisos creados con
+  `data._test=true`; `cleanupDatabase` + teardown global los purgan. La BD
+  vuelve a 7 permisos tras correr la suite (antes acumulaba ~50).
+- **Identidad externa única-nullable.** Migración 014: índices únicos parciales
+  sobre `users.data->>'telegram_id'` y `whatsapp_phone`. `securityRouter` no
+  persiste '' y mapea 23505 → 409; `/auth/external/link` → 409 en colisión.
+  Campos Telegram ID / WhatsApp agregados a `UserEditor.vue`.
+- **Bug reset corregido.** `reset-db.sh` cargaba `.env` del CWD → reseteaba la
+  BD equivocada (`todoerp` en vez de `cepi`); ahora resuelve `.env` relativo al
+  script. `reset-cepi.sh` reinicia el backend antes del seeder (shadow tables).
+- **ERP fuera de ngrok.** Se quitó `VITE_BASE=/erp/` y el proxy `/erp`; el ERP
+  sirve en raíz `/` en :5173 (acceso directo), arreglando las URLs no-root.
+
+Tests: TodoERP backend 182 passed (1 preexistente roto: `cross_type_parent`,
+`entity_episode.patient_id` NOT NULL); cepi-bot 39/39.
+
+---
+
 ## Servicios corriendo (PM2 local)
 
 | Nombre | Puerto | Estado | Notas |

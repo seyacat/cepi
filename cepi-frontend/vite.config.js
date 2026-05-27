@@ -27,8 +27,8 @@ export default defineConfig({
       '/whatsapp': { target: 'http://localhost:9997', changeOrigin: true },
       // Webhook de Telegram → listener de cepi-bot (9998).
       '/telegram': { target: 'http://localhost:9998', changeOrigin: true },
-      // UI de TodoERP servida bajo /erp/ (corre con VITE_BASE=/erp/ en :5173).
-      '/erp':      { target: 'http://localhost:5173', changeOrigin: true, ws: true },
+      // El ERP (TodoERP UI, :5173) NO se expone por ngrok: se accede directo
+      // en local y sirve en raíz '/', sin base. Ver ngrok.yml / ecosystem.
     },
   },
 });

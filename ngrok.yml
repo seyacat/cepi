@@ -16,7 +16,9 @@ version: "3"
 #   /api/...     -> TodoERP (3001)
 #   /whatsapp    -> cepi-bot WhatsApp webhook (9997)
 #   /telegram    -> cepi-bot Telegram webhook (9998)
-#   /erp         -> UI TodoERP (5173)
+#
+# La UI de TodoERP (:5173) NO se expone por ngrok: se accede directo en local
+# (http://localhost:5173), sirve en raíz '/' sin base.
 endpoints:
   - name: cepi
     url: known-simple-gull.ngrok-free.app
