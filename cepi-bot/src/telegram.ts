@@ -86,6 +86,10 @@ const lastPatient = new Map<number, { id: string; name: string }>();
 /** chat_id → pending idle timer that proactively sends the menu after IDLE_MS. */
 const idleTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
+/** chat_id → in-progress ficha form walk (asks closed questions one by one). */
+interface FormWalk { form: BotForm; idx: number; answers: Record<string, any>; }
+const formWalks = new Map<number, FormWalk>();
+
 /** Idle window after which the chat is proactively reset to the "new chat" menu. */
 const IDLE_MS = 5 * 60 * 1000;
 
@@ -304,6 +308,7 @@ async function resolveImageToken(message: any, jwt: string): Promise<string | nu
  */
 async function sendWelcomeMenu(chatId: number): Promise<void> {
   chatSessions.delete(chatId);   // fresh session on the next turn
+  formWalks.delete(chatId);      // abandon any half-filled ficha walk
   const buttons: QuickReply[] = [
     { label: '➕ Nuevo paciente', send: 'nuevo paciente' },
     { label: '🔍 Buscar paciente', send: 'paciente' },
@@ -339,6 +344,14 @@ async function handleInbound(invokeChat: InvokeChat, message: any): Promise<void
   // An image arrives as `photo`/`document`; its text (if any) is in `caption`.
   const hasImage = (Array.isArray(message?.photo) && message.photo.length)
     || (message?.document && String(message.document?.mime_type || '').startsWith('image/'));
+
+  // Mid-ficha text answer: feed it to the active walk (images supersede it).
+  if (!hasImage && formWalks.has(chatId)) {
+    const answer = String(message?.text || '').trim();
+    if (answer) { await applyWalkAnswer(invokeChat, chatId, answer); return; }
+  }
+  if (hasImage) formWalks.delete(chatId);   // the image flow takes over the section
+
   let imageToken: string | null | '' = '';
   if (hasImage) {
     if (!jwt) {
@@ -365,8 +378,7 @@ async function handleInbound(invokeChat: InvokeChat, message: any): Promise<void
 }
 
 /**
- * Run one chat turn for a chat and send the reply (text + status header +
- * inline-keyboard buttons for any quick replies). Shared by text/image
+ * Run one chat turn for a chat and deliver the reply. Shared by text/image
  * messages and by tapped-button callbacks.
  */
 async function routeTurn(
@@ -381,7 +393,15 @@ async function routeTurn(
     headers,
     body: { message: turnText, session_id: sessionId },
   });
+  await deliver(invokeChat, chatId, body);
+}
 
+/**
+ * Deliver a chat-brain response to the user. A ficha section form is shown as
+ * context and then walked field-by-field (closed questions as buttons); every
+ * other response is sent as text + quick-reply buttons.
+ */
+async function deliver(invokeChat: InvokeChat, chatId: number, body: any): Promise<void> {
   touch(chatId);
 
   // Remember the session for this chat; drop it when the session closes.
@@ -398,7 +418,94 @@ async function routeTurn(
     lastPatient.set(chatId, { id: body.active_patient_id, name });
   }
 
-  await sendTelegramText(chatId, composeReply(body), buildKeyboard(body?.quick_replies));
+  if (isWalkableForm(body?.form)) {
+    // Show the whole section as context, then ask its questions one by one.
+    await sendTelegramText(chatId, composeReply(body));
+    formWalks.set(chatId, { form: body.form, idx: 0, answers: {} });
+    await askWalkField(invokeChat, chatId);
+  } else {
+    formWalks.delete(chatId);
+    await sendTelegramText(chatId, composeReply(body), buildKeyboard(body?.quick_replies));
+  }
+}
+
+/** Only ficha section forms are walked; search / new-patient forms stay as text. */
+function isWalkableForm(form: any): form is BotForm {
+  return !!form && typeof form.id === 'string' && form.id.startsWith('ficha_grp_')
+    && Array.isArray(form.fields) && form.fields.some((f: any) => f.type !== 'heading');
+}
+
+/** Selectable options for a walk field (Sí/No for checkbox; field options otherwise). */
+function walkOptions(f: BotFormField): Array<{ label: string; value: any }> {
+  if (f.type === 'checkbox') return [{ label: 'Sí', value: true }, { label: 'No', value: false }];
+  return (f.options || []).map(o => typeof o === 'string'
+    ? { label: o, value: o }
+    : { label: o.label, value: (o as any).value });
+}
+
+/** Ask the current walk field (skipping headings). Submits when none remain. */
+async function askWalkField(invokeChat: InvokeChat, chatId: number): Promise<void> {
+  const w = formWalks.get(chatId);
+  if (!w) return;
+  while (w.idx < w.form.fields.length && w.form.fields[w.idx].type === 'heading') w.idx++;
+  if (w.idx >= w.form.fields.length) { await submitWalk(invokeChat, chatId); return; }
+
+  const f = w.form.fields[w.idx];
+  const askable = w.form.fields.filter(x => x.type !== 'heading');
+  const n = askable.length;
+  const pos = w.form.fields.slice(0, w.idx).filter(x => x.type !== 'heading').length + 1;
+  const actions = (w.form.actions || []).map(a => ({ text: a.label, callback_data: a.send }));
+
+  if (f.type === 'radio' || f.type === 'checkbox') {
+    const rows = walkOptions(f).map((o, i) => [{ text: o.label, callback_data: `fw:${i}` }]);
+    if (actions.length) rows.push(actions);
+    await sendTelegramText(chatId, `(${pos}/${n}) ${f.label}`, { inline_keyboard: rows });
+  } else if (f.type === 'image_upload') {
+    await sendTelegramText(chatId, `(${pos}/${n}) ${f.label}\nEnviá la(s) imagen(es) como foto.`,
+      actions.length ? { inline_keyboard: [actions] } : undefined);
+  } else {
+    const hint = f.placeholder ? ` (${f.placeholder})` : '';
+    await sendTelegramText(chatId, `(${pos}/${n}) ${f.label}${hint}`,
+      actions.length ? { inline_keyboard: [actions] } : undefined);
+  }
+}
+
+/** Record the answer for the current field and advance the walk. */
+async function applyWalkAnswer(invokeChat: InvokeChat, chatId: number, value: any): Promise<void> {
+  const w = formWalks.get(chatId);
+  if (!w) return;
+  const f = w.form.fields[w.idx];
+  if (f?.key) w.answers[f.key] = value;
+  w.idx++;
+  await askWalkField(invokeChat, chatId);
+}
+
+/** All fields answered: submit the form to the brain and deliver the next step. */
+async function submitWalk(invokeChat: InvokeChat, chatId: number): Promise<void> {
+  const w = formWalks.get(chatId);
+  if (!w) return;
+  formWalks.delete(chatId);
+  const jwt = await getServiceJwt();
+  const apiKey = process.env.CEPI_GUEST_API_KEY || '';
+  const headers: Record<string, string> = {};
+  if (jwt) headers['authorization'] = `Bearer ${jwt}`;
+  else if (apiKey) headers['x-api-key'] = apiKey;
+  const sessionId = chatSessions.get(chatId) || undefined;
+
+  let body: any;
+  if (w.form.submit_mode === 'structured') {
+    ({ body } = await invokeChat({
+      headers,
+      body: { form_submission: { form_id: w.form.id, data: w.answers }, session_id: sessionId },
+    }));
+  } else if (w.form.submit_send) {
+    const msg = w.form.submit_send.replace(/\{(\w+)\}/g, (_m, k) => String(w.answers[k] ?? ''));
+    ({ body } = await invokeChat({ headers, body: { message: msg, session_id: sessionId } }));
+  } else {
+    const msg = Object.values(w.answers).join(' ').trim() || 'ok';
+    ({ body } = await invokeChat({ headers, body: { message: msg, session_id: sessionId } }));
+  }
+  await deliver(invokeChat, chatId, body);
 }
 
 /** Handle a tapped inline button: resolve its `send` payload and route it. */
@@ -408,6 +515,19 @@ async function handleCallback(invokeChat: InvokeChat, cq: any): Promise<void> {
   if (typeof chatId !== 'number') return;
   touch(chatId);
   const data = cq?.data;
+
+  // Mid-ficha walk: `fw:<i>` is the chosen option for the current field.
+  if (typeof data === 'string' && data.startsWith('fw:') && formWalks.has(chatId)) {
+    const w = formWalks.get(chatId)!;
+    const f = w.form.fields[w.idx];
+    const value = walkOptions(f)[parseInt(data.slice(3), 10)]?.value;
+    await applyWalkAnswer(invokeChat, chatId, value);
+    return;
+  }
+  // Any other button while walking is an action (e.g. "Omitir"): leave the walk
+  // and route its send normally.
+  if (formWalks.has(chatId)) formWalks.delete(chatId);
+
   const mapped = callbackSends.get(data);
   // A bare internal id (q<n>) that isn't in the map is a stale button — its
   // mapping was lost (e.g. the bot restarted). Re-show the menu instead of
