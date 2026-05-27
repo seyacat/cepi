@@ -554,7 +554,10 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         // "patient" (atención) assumes the patient is being attended, so the
         // bot opens a new episode and starts the ficha clínica.
         const infoOnly = (session.extracted_slots as any)?.mode === 'patient_info';
-        let fichaForm: BotForm | null = null;
+        const greet =
+          `Paciente activo: ${nombre}` +
+          (info.length ? `\n  ${info.join(' · ')}` : '') +
+          (prevLine ? `\n  ${prevLine}` : '');
 
         if (infoOnly) {
           // Non-presential lookup: link the session to the patient's most
@@ -566,40 +569,64 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
             patient_context: { id: pid, ...patientData },
             active_form: null,
           };
-        } else {
-          const episodeId = await openEpisodeFicha(mcp, session, pid);
-          session.active_episode_id = episodeId;
-          // Skip ficha sections already complete (e.g. a returning patient
-          // with full contact data) — start at the first one still missing.
-          const firstGroup = await firstIncompleteFichaGroup(mcp, session);
-          fichaForm = firstGroup
-            ? await fichaGroupFormFilled(firstGroup, mcp, session)
-            : null;
+          const ackText = `${greet}\n\nModo información (no presencial). ¿Qué querés saber del paciente?`;
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({
+            ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: session.active_patient_id,
+            active_episode_id: session.active_episode_id, form: null,
+          });
+        }
+
+        // Atención mode. If the patient has a prior episode, ask whether to open
+        // a NEW consultation or continue the previous one — before creating it.
+        if (lastEpisodeId) {
+          session.active_episode_id = null;
           session.extracted_slots = {
             ...(session.extracted_slots || {}),
             mode: 'patient',
             patient_context: { id: pid, ...patientData },
-            form_state: { kind: 'ficha' },
-            ficha_done: [],
-            ...(firstGroup ? { ficha_current: firstGroup } : {}),
-            active_form: fichaForm,
+            pending_resume_episode: lastEpisodeId,
+            active_form: null,
           };
+          const ackText = `${greet}\n\n¿Es una consulta nueva o continuamos la anterior?`;
+          session.turns = [...session.turns,
+            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({
+            ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: session.active_patient_id,
+            active_episode_id: null, form: null,
+            quick_replies: [
+              { label: '🆕 Consulta nueva',   send: 'consulta nueva' },
+              { label: '▶️ Continuar anterior', send: 'continuar consulta' },
+            ],
+          });
         }
 
-        const ackText =
-          `Paciente activo: ${nombre}` +
-          (info.length ? `\n  ${info.join(' · ')}` : '') +
-          (prevLine ? `\n  ${prevLine}` : '') +
-          (infoOnly
-            ? `\n\nModo información (no presencial). ¿Qué querés saber del paciente?`
-            : fichaForm
-              ? `\n\nAbrí una consulta nueva. Empecemos la ficha clínica:`
-              : `\n\nAbrí una consulta nueva. La ficha ya está completa — revisá lo que quieras desde los marcadores.`);
-        session.turns = [
-          ...session.turns,
-          { role: 'user',      content: message },
-          { role: 'assistant', content: ackText },
-        ];
+        // No prior episode → open a new consultation directly.
+        const episodeId = await openEpisodeFicha(mcp, session, pid);
+        session.active_episode_id = episodeId;
+        const firstGroup = await firstIncompleteFichaGroup(mcp, session);
+        const fichaForm = firstGroup
+          ? await fichaGroupFormFilled(firstGroup, mcp, session)
+          : null;
+        session.extracted_slots = {
+          ...(session.extracted_slots || {}),
+          mode: 'patient',
+          patient_context: { id: pid, ...patientData },
+          form_state: { kind: 'ficha' },
+          ficha_done: [],
+          ...(firstGroup ? { ficha_current: firstGroup } : {}),
+          active_form: fichaForm,
+        };
+        const ackText = `${greet}\n\n` + (fichaForm
+          ? 'Abrí una consulta nueva. Empecemos la ficha clínica:'
+          : 'Abrí una consulta nueva. La ficha ya está completa — revisá lo que quieras desde los marcadores.');
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: ackText }];
         await saveSession(mcp, session);
         return res.json({
           ok: true, session_id: sessionId, text: ackText,
@@ -656,6 +683,51 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           history: session.turns, toolCalls: [],
           active_patient_id: session.active_patient_id,
           active_episode_id: null,
+        });
+      }
+
+      // ── Episode choice after activating a patient with prior history ──
+      //    (the "¿consulta nueva o continuar la anterior?" prompt).
+      const newConsult  = trimmed.match(/^\/?\s*(consulta\s+nueva|nueva\s+consulta)\s*$/i);
+      const contConsult = trimmed.match(/^\/?\s*continuar(\s+(consulta|anterior|la\s+anterior))?\s*$/i);
+      if ((newConsult || contConsult) && session.active_patient_id) {
+        const slots = (session.extracted_slots || {}) as any;
+        let lead: string;
+        if (contConsult) {
+          const epId = slots.pending_resume_episode || session.active_episode_id;
+          if (epId) {
+            session.active_episode_id = epId;
+            lead = 'Continuamos la consulta anterior.';
+          } else {
+            session.active_episode_id = await openEpisodeFicha(mcp, session, session.active_patient_id);
+            lead = 'No encontré una consulta previa; abrí una nueva.';
+          }
+        } else {
+          session.active_episode_id = await openEpisodeFicha(mcp, session, session.active_patient_id);
+          lead = 'Consulta nueva abierta.';
+        }
+        const firstGroup = await firstIncompleteFichaGroup(mcp, session);
+        const fichaForm = firstGroup ? await fichaGroupFormFilled(firstGroup, mcp, session) : null;
+        const restSlots = { ...slots };
+        delete restSlots.pending_resume_episode;
+        session.extracted_slots = {
+          ...restSlots,
+          mode: 'patient',
+          form_state: { kind: 'ficha' },
+          ...(contConsult ? {} : { ficha_done: [] }),
+          ...(firstGroup ? { ficha_current: firstGroup } : {}),
+          active_form: fichaForm,
+        };
+        const ackText = lead + (fichaForm ? '\n\nSeguimos con la ficha clínica:'
+          : '\n\nLa ficha está completa — revisá lo que quieras desde los marcadores.');
+        session.turns = [...session.turns,
+          { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({
+          ok: true, session_id: sessionId, text: ackText, history: session.turns,
+          toolCalls: [], active_patient_id: session.active_patient_id,
+          active_episode_id: session.active_episode_id, form: fichaForm,
+          bookmarks: await fichaBookmarks(mcp, session),
         });
       }
 
