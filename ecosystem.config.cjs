@@ -41,6 +41,9 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         VITE_API_URL: 'http://localhost:3001',
+        // Servido bajo /erp/ para poder exponerlo por el túnel ngrok junto al
+        // resto (path routing en el Vite de cepi-frontend).
+        VITE_BASE: '/erp/',
       },
       max_memory_restart: '500M',
     },
@@ -57,6 +60,20 @@ module.exports = {
         PORT: 3002,
         TODOERP_API_URL: 'http://localhost:3001',
         CEPI_LLM_PROVIDER: 'claude',
+        // ── WhatsApp webhook (segundo listener en el mismo proceso) ──
+        WHATSAPP_WEBHOOK_PORT: 9997,
+        WHATSAPP_VERIFY_TOKEN: 'mywpverifytoken',    // el mismo configurado en Meta
+        WHATSAPP_BOT_EMAIL: 'admin@erp.com',        // service account → JWT por turno
+        WHATSAPP_BOT_PASSWORD: 'Admin123!',
+        // Credenciales Meta Cloud API (envío real de respuestas).
+        WHATSAPP_TOKEN:    'EAAcujNkZCcnEBRlT45OP1SGYhCbgaZCCZAk9SGi0OR7M7KO4bso2iYpwmOMEsgKvgcZBcZAKLMZBrAXLdIQsodNHNdrTOAZC3gOmp0m1gTZBbLCGJbZAH7sWF1ndVU6058v5a22pJZC8jcQ9eNhijlRarJFrD2ZBG0Bym8mHvpC43nZAAKZCCSnWgeqwDYqOJNxW5AGDYUxCV8g88cJZAZAxMCvX0v4tEM5azdMP8Vw1Kju4mgLusAmnbsHHH28kUyumReZCdsbf72xLFexHuGklFZAme0AuVGX7DQKrT75IZD',
+        WHATSAPP_PHONE_ID: '1195901160263503',
+        // ── Telegram webhook (tercer listener en el mismo proceso) ──
+        // El token, el secret y TELEGRAM_PUBLIC_URL viven en cepi-bot/.env
+        // (gitignored). Acá solo el puerto y la cuenta de servicio.
+        TELEGRAM_WEBHOOK_PORT: 9998,
+        TELEGRAM_BOT_EMAIL: 'admin@erp.com',   // service account → JWT por turno
+        TELEGRAM_BOT_PASSWORD: 'Admin123!',
       },
       max_memory_restart: '500M',
     },
@@ -84,6 +101,22 @@ module.exports = {
       autorestart: true,
       env: { CEPI_ISIC_PORT: 8000 },
       max_memory_restart: '1G',
+    },
+    {
+      // Túnel ngrok hacia el dev server de Vite (5174), que enruta por path.
+      // Dominio fijo `known-simple-gull.ngrok-free.app` → expone frontend +
+      // API + webhooks de WhatsApp (/whatsapp) y Telegram (/telegram).
+      // Mergea dos configs: el del HOME aporta el authtoken (secreto, fuera
+      // del repo); ./ngrok.yml aporta el endpoint (versionado). Arranca solo
+      // el endpoint `cepi` por nombre.
+      name: 'ngrok',
+      script: 'ngrok',
+      args: `start cepi --config ${process.env.HOME}/.config/ngrok/ngrok.yml --config ./ngrok.yml`,
+      cwd: './',
+      interpreter: 'none',
+      watch: false,
+      autorestart: true,
+      max_memory_restart: '200M',
     },
   ],
 };

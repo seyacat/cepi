@@ -30,6 +30,8 @@ import {
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
 import { listEpisodeImagesWithClassifications, CLINICAL_IMAGE_ENTITY_ID, HAM_TO_ICD } from './episodeImages.js';
+import { startWhatsapp } from './whatsapp.js';
+import { startTelegram } from './telegram.js';
 
 dotenv.config();
 
@@ -262,7 +264,7 @@ app.get('/api/bot/episode-images', async (req: Request, res: Response, next: Nex
   }
 });
 
-app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction) => {
+const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
   let mcp: TodoErpMcpClient | null = null;
   try {
     const {
@@ -1349,7 +1351,37 @@ app.post('/api/bot/chat', async (req: Request, res: Response, next: NextFunction
   finally {
     if (mcp) await mcp.close().catch(() => {});
   }
-});
+};
+
+app.post('/api/bot/chat', chatHandler);
+
+/**
+ * Programmatic entry point to the exact same chat brain used by the HTTP
+ * endpoint. Builds a minimal Express-compatible req/res shim and runs
+ * `chatHandler`, so any non-HTTP channel (e.g. the WhatsApp webhook on
+ * :9997) goes through identical session handling, the confirmation gate
+ * and PII redaction — no logic is duplicated.
+ */
+export function invokeChat(input: {
+  body: any;
+  headers?: Record<string, string>;
+}): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const headers = Object.fromEntries(
+      Object.entries(input.headers || {}).map(([k, v]) => [k.toLowerCase(), v]),
+    );
+    const req: any = {
+      body: input.body || {},
+      header: (name: string) => headers[name.toLowerCase()] ?? '',
+    };
+    let statusCode = 200;
+    const res: any = {
+      status(code: number) { statusCode = code; return res; },
+      json(payload: any) { resolve({ status: statusCode, body: payload }); return res; },
+    };
+    Promise.resolve(chatHandler(req, res, (err: any) => reject(err))).catch(reject);
+  });
+}
 
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[cepi-bot] error:', err);
@@ -1360,8 +1392,16 @@ const server = app.listen(PORT, () => {
   console.log(`🤖 cepi-bot listening on :${PORT}`);
 });
 
+// WhatsApp webhook on its own port (default :9997), sharing the same brain.
+const whatsappServer = startWhatsapp(invokeChat);
+
+// Telegram webhook on its own port (default :9998), sharing the same brain.
+const telegramServer = startTelegram(invokeChat);
+
 async function shutdown(signal: string) {
   console.log(`[${signal}] shutting down cepi-bot`);
+  whatsappServer.close();
+  telegramServer.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000);
 }

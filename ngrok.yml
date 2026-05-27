@@ -1,0 +1,24 @@
+version: "3"
+
+# Config de túneles ngrok TRACKEADA en el repo (sin authtoken).
+#
+# El authtoken NO va acá (es secreto): vive en ~/.config/ngrok/ngrok.yml.
+# El launcher de PM2 (app "ngrok" en ecosystem.config.cjs) arranca ngrok
+# mergeando ambos configs:
+#   ngrok start --all \
+#     --config /home/<user>/.config/ngrok/ngrok.yml   (authtoken) \
+#     --config /mnt/sda1/cepi/ngrok.yml               (este: endpoints)
+#
+# Un solo endpoint en el dominio fijo, apuntando al dev server de Vite (5174),
+# que enruta por path (ver cepi-frontend/vite.config.js):
+#   /            -> frontend (5174)
+#   /api/bot     -> cepi-bot HTTP (3002)
+#   /api/...     -> TodoERP (3001)
+#   /whatsapp    -> cepi-bot WhatsApp webhook (9997)
+#   /telegram    -> cepi-bot Telegram webhook (9998)
+#   /erp         -> UI TodoERP (5173)
+endpoints:
+  - name: cepi
+    url: known-simple-gull.ngrok-free.app
+    upstream:
+      url: 5174
