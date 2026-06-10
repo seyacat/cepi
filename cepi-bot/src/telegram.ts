@@ -147,6 +147,27 @@ const idleTimers = new Map<number, ReturnType<typeof setTimeout>>();
 interface FormWalk { form: BotForm; idx: number; answers: Record<string, any>; }
 const formWalks = new Map<number, FormWalk>();
 
+/**
+ * chat_id → tail of a per-chat promise chain. Telegram delivers updates for a
+ * chat without waiting for our previous one to finish, so two quick messages
+ * (e.g. tapping "nuevo paciente" then immediately typing the cédula) can run
+ * concurrently and race the walk registration — resurfacing the very
+ * search-branch bug the walk fixes. Serialising per chat makes each update see
+ * the state the previous one left. Keyed by chat so distinct chats stay
+ * parallel; entries are pruned when their chain drains.
+ */
+const chatQueues = new Map<number, Promise<void>>();
+function serialize(chatId: number, task: () => Promise<void>): Promise<void> {
+  const prev = chatQueues.get(chatId) || Promise.resolve();
+  const next = prev.then(task, task).catch(e =>
+    console.error('[telegram] queued task error:', e?.message || e));
+  chatQueues.set(chatId, next);
+  // Drop the entry once this is the last task in the chain (avoid leaking a
+  // map entry per chat forever).
+  next.finally(() => { if (chatQueues.get(chatId) === next) chatQueues.delete(chatId); });
+  return next;
+}
+
 /** Idle window after which the chat is proactively reset to the "new chat" menu. */
 const IDLE_MS = 5 * 60 * 1000;
 
@@ -436,12 +457,53 @@ async function handleInbound(invokeChat: InvokeChat, message: any): Promise<void
   const hasImage = (Array.isArray(message?.photo) && message.photo.length)
     || (message?.document && String(message.document?.mime_type || '').startsWith('image/'));
 
-  // Mid-ficha text answer: feed it to the active walk (images supersede it).
-  if (!hasImage && formWalks.has(chatId)) {
-    const answer = String(message?.text || '').trim();
-    if (answer) { await applyWalkAnswer(invokeChat, chatId, answer); return; }
+  // ── Mid-walk input handling ─────────────────────────────────────────────
+  // While a field-by-field walk is active, route the message to the walk
+  // instead of the brain. A ficha walk lands on an active patient/episode, so
+  // an inbound image legitimately supersedes it (the §4.7/§8 image flow takes
+  // over the section). The patient_new walk has NO active patient yet, so an
+  // image there would orphan an attachment and dump the user into the search
+  // branch — reject it and keep collecting the fields.
+  const activeWalk = formWalks.get(chatId);
+  const fichaWalk = !!activeWalk && activeWalk.form.id.startsWith('ficha_grp_');
+  if (activeWalk) {
+    if (hasImage) {
+      if (fichaWalk) {
+        formWalks.delete(chatId);            // image flow takes over the section
+      } else {
+        await sendTelegramText(chatId,
+          'Estoy registrando los datos del paciente — todavía no puedo recibir imágenes. ' +
+          'Respondé el campo que te pedí (o escribí "cancelar").');
+        await askWalkField(invokeChat, chatId);
+        return;
+      }
+    } else {
+      // Non-image: take the field answer from text OR a caption (video/voice
+      // messages carry only a caption). Command-like inputs abandon capture.
+      const answer = String(message?.text || message?.caption || '').trim();
+      if (/^\/?\s*(cancelar|salir|men[uú])\s*$/i.test(answer)) {
+        formWalks.delete(chatId);
+        await sendWelcomeMenu(chatId);
+        return;
+      }
+      // "omitir" and slash-commands aren't field values — hand them to the
+      // brain so they behave like the equivalent button / typed command.
+      if (/^\/?\s*omitir(\s+ficha)?\s*$/i.test(answer)) {
+        formWalks.delete(chatId);
+        await routeTurn(invokeChat, chatId, 'omitir ficha', jwt, '');
+        return;
+      }
+      if (/^\//.test(answer)) {
+        formWalks.delete(chatId);
+        await routeTurn(invokeChat, chatId, answer, jwt, '');
+        return;
+      }
+      if (answer) { await applyWalkAnswer(invokeChat, chatId, answer); return; }
+      // Empty / contentless message mid-walk: just re-ask the current field.
+      await askWalkField(invokeChat, chatId);
+      return;
+    }
   }
-  if (hasImage) formWalks.delete(chatId);   // the image flow takes over the section
 
   let imageToken: string | null | '' = '';
   if (hasImage) {
@@ -504,20 +566,45 @@ async function deliver(invokeChat: InvokeChat, chatId: number, body: any): Promi
     lastPatient.set(chatId, { id: body.active_patient_id, name });
   }
 
-  if (isWalkableForm(body?.form)) {
-    // Show the whole section as context, then ask its questions one by one.
-    await sendTelegramText(chatId, composeReply(body));
+  // A staged pending_action means the brain is waiting for a sí/no, NOT for a
+  // form to be filled. The brain can echo a STALE `form` alongside a
+  // pending_action (server.ts re-attaches the session's persisted active_form
+  // to every reply that lacks one) — e.g. the patient_new form is still
+  // attached on the "¿Confirmas?" turn. Restarting the walk there would
+  // deadlock creation, so pending_action wins and we show the Sí/No buttons.
+  if (isWalkableForm(body?.form) && !body?.pending_action) {
+    // Ficha sections are shown whole as context; short forms (new patient)
+    // go straight to their first question after the brain's intro text —
+    // rendering the field list + "Respondé con los datos" would contradict
+    // the one-by-one walk that follows.
+    const intro = body.form.id.startsWith('ficha_grp_')
+      ? composeReply(body)
+      : composeReply({ ...body, form: null });
     formWalks.set(chatId, { form: body.form, idx: 0, answers: {} });
+    await sendTelegramText(chatId, intro);
     await askWalkField(invokeChat, chatId);
   } else {
     formWalks.delete(chatId);
-    await sendTelegramText(chatId, composeReply(body), buildKeyboard(body?.quick_replies));
+    // With the confirm gate enabled the brain answers "¿Confirmas?" without
+    // quick replies (the web frontend renders its own ✓/✗ card) — give
+    // Telegram users tappable Sí/No buttons instead of making them type.
+    const keyboard = buildKeyboard(body?.quick_replies)
+      ?? (body?.pending_action
+        ? buildKeyboard([{ label: '✅ Sí', send: 'sí' }, { label: '❌ No', send: 'no' }])
+        : undefined);
+    await sendTelegramText(chatId, composeReply(body), keyboard);
   }
 }
 
-/** Only ficha section forms are walked; search / new-patient forms stay as text. */
+/**
+ * Forms walked field-by-field: ficha sections and the new-patient form.
+ * The search form stays as text — any typed text already triggers a search.
+ * (Without walking `patient_new`, a user who taps "nuevo paciente" and then
+ * sends just the cédula would fall through to the search branch of the brain.)
+ */
 function isWalkableForm(form: any): form is BotForm {
-  return !!form && typeof form.id === 'string' && form.id.startsWith('ficha_grp_')
+  return !!form && typeof form.id === 'string'
+    && (form.id.startsWith('ficha_grp_') || form.id === 'patient_new')
     && Array.isArray(form.fields) && form.fields.some((f: any) => f.type !== 'heading');
 }
 
@@ -543,7 +630,10 @@ async function askWalkField(invokeChat: InvokeChat, chatId: number): Promise<voi
   const actions = (w.form.actions || []).map(a => ({ text: a.label, callback_data: a.send }));
 
   if (f.type === 'radio' || f.type === 'checkbox') {
-    const rows = walkOptions(f).map((o, i) => [{ text: o.label, callback_data: `fw:${i}` }]);
+    // callback_data carries BOTH the field index and the option index so a
+    // tap on a stale keyboard (Telegram never disables old ones) can be
+    // matched against the walk's current position and ignored if it's behind.
+    const rows = walkOptions(f).map((o, i) => [{ text: o.label, callback_data: `fw:${w.idx}:${i}` }]);
     if (actions.length) rows.push(actions);
     await sendTelegramText(chatId, `(${pos}/${n}) ${f.label}`, { inline_keyboard: rows });
   } else if (f.type === 'image_upload') {
@@ -583,7 +673,10 @@ async function submitWalk(invokeChat: InvokeChat, chatId: number): Promise<void>
       body: { form_submission: { form_id: w.form.id, data: w.answers }, session_id: sessionId },
     }));
   } else if (w.form.submit_send) {
-    const msg = w.form.submit_send.replace(/\{(\w+)\}/g, (_m, k) => String(w.answers[k] ?? ''));
+    // `||` is the field separator of submit_send commands (e.g. /nuevo-paciente)
+    // — scrub it from free-text answers so they can't break the parse.
+    const msg = w.form.submit_send.replace(/\{(\w+)\}/g, (_m, k) =>
+      String(w.answers[k] ?? '').replace(/\|{2,}/g, ' ').replace(/\s+/g, ' ').trim());
     ({ body } = await invokeChat({ headers, body: { message: msg, session_id: sessionId } }));
   } else {
     const msg = Object.values(w.answers).join(' ').trim() || 'ok';
@@ -606,11 +699,21 @@ async function handleCallback(invokeChat: InvokeChat, cq: any): Promise<void> {
   touch(chatId);
   const data = cq?.data;
 
-  // Mid-ficha walk: `fw:<i>` is the chosen option for the current field.
-  if (typeof data === 'string' && data.startsWith('fw:') && formWalks.has(chatId)) {
-    const w = formWalks.get(chatId)!;
-    const f = w.form.fields[w.idx];
-    const value = walkOptions(f)[parseInt(data.slice(3), 10)]?.value;
+  // Mid-walk option tap: `fw:<fieldIdx>:<optIdx>` is the chosen option.
+  if (typeof data === 'string' && data.startsWith('fw:')) {
+    const w = formWalks.get(chatId);
+    // A leftover `fw:*` with no active walk is a stale keyboard — no-op rather
+    // than forwarding the literal "fw:0" to the brain as a search.
+    if (!w) return;
+    const parts = data.split(':');
+    // Old single-index form `fw:<i>` (pre-restart buttons) targets the current
+    // field; the new form `fw:<fieldIdx>:<optIdx>` must match w.idx or it's a
+    // tap on a question already answered — ignore it.
+    const fieldIdx = parts.length >= 3 ? parseInt(parts[1], 10) : w.idx;
+    const optIdx   = parseInt(parts[parts.length - 1], 10);
+    if (fieldIdx !== w.idx) return;
+    const value = walkOptions(w.form.fields[w.idx])[optIdx]?.value;
+    if (value === undefined) return;            // out-of-range stale option
     await applyWalkAnswer(invokeChat, chatId, value);
     return;
   }
@@ -686,12 +789,22 @@ export function startTelegram(invokeChat: InvokeChat) {
     try {
       const message = req.body?.message || req.body?.edited_message;
       const callback = req.body?.callback_query;
+      // Serialise per chat so updates for one chat can't race each other.
+      const chatId = callback?.message?.chat?.id ?? message?.chat?.id;
       if (callback) {
-        await handleCallback(invokeChat, callback).catch(e =>
-          console.error('[telegram] callback error:', e?.message || e));
+        if (typeof chatId === 'number') {
+          await serialize(chatId, () => handleCallback(invokeChat, callback));
+        } else {
+          await handleCallback(invokeChat, callback).catch(e =>
+            console.error('[telegram] callback error:', e?.message || e));
+        }
       } else if (message) {
-        await handleInbound(invokeChat, message).catch(e =>
-          console.error('[telegram] handle error:', e?.message || e));
+        if (typeof chatId === 'number') {
+          await serialize(chatId, () => handleInbound(invokeChat, message));
+        } else {
+          await handleInbound(invokeChat, message).catch(e =>
+            console.error('[telegram] handle error:', e?.message || e));
+        }
       }
     } catch (e: any) {
       console.error('[telegram] webhook error:', e?.message || e);

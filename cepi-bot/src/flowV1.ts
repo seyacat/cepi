@@ -809,7 +809,11 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
         `  • Apellidos: ${apellidos}\n\n¿Confirmas?`;
       await appendAndSave(session, userMsg, text, mcp);
       // The confirmation card already carries ✓/✗ — no duplicate quick replies.
-      return { text, pending_action_set: true };
+      // Clear the persisted patient_new form (form: null): we're now staging
+      // the create and waiting on a sí/no, so the server must stop re-attaching
+      // patient_new to the "¿Confirmas?" turn. With the confirm gate ON this is
+      // what prevents Telegram from restarting the walk over the confirmation.
+      return { text, form: null, pending_action_set: true };
     }
 
     // Trigger new-patient form
