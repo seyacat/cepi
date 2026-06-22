@@ -7,10 +7,11 @@
 
     <button class="newpat" @click="showCreate = !showCreate">＋ Nuevo paciente</button>
     <form v-if="showCreate" class="createform" @submit.prevent="create">
-      <input v-model="cNombre" placeholder="Nombre completo *" autocomplete="off" />
+      <input v-model="cNombre" placeholder="Nombre *" autocomplete="off" />
+      <input v-model="cApellido" placeholder="Apellido *" autocomplete="off" />
       <input v-model="cCedula" placeholder="Cédula *" autocomplete="off" />
       <div class="cf-actions">
-        <button type="submit" :disabled="creating || !cNombre.trim() || !cCedula.trim()">{{ creating ? 'Creando…' : 'Crear' }}</button>
+        <button type="submit" :disabled="creating || !cNombre.trim() || !cApellido.trim() || !cCedula.trim()">{{ creating ? 'Creando…' : 'Crear' }}</button>
         <button type="button" class="cf-cancel" @click="showCreate = false">Cancelar</button>
       </div>
       <p v-if="createError" class="error">{{ createError }}</p>
@@ -62,17 +63,19 @@ const error = ref('');
 
 const showCreate = ref(false);
 const cNombre = ref('');
+const cApellido = ref('');
 const cCedula = ref('');
 const creating = ref(false);
 const createError = ref('');
 
 async function create() {
-  if (!cNombre.value.trim() || !cCedula.value.trim()) return;
+  if (!cNombre.value.trim() || !cApellido.value.trim() || !cCedula.value.trim()) return;
   creating.value = true;
   createError.value = '';
   try {
-    const p = await createPatient({ nombre: cNombre.value.trim(), cedula: cCedula.value.trim() });
+    const p = await createPatient({ nombre: cNombre.value.trim(), apellidos: cApellido.value.trim(), cedula: cCedula.value.trim() });
     cNombre.value = '';
+    cApellido.value = '';
     cCedula.value = '';
     showCreate.value = false;
     await load();

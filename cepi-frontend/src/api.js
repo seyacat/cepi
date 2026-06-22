@@ -175,16 +175,14 @@ export async function listPatients({ limit = 500 } = {}) {
 
 // Create a patient (contact). Schema requires only nombre; cédula is enforced
 // client-side. Returns the created record { id, data, ... }.
-export async function createPatient({ nombre, cedula }) {
+export async function createPatient({ nombre, apellidos, cedula }) {
   const res = await call('/api/entities', {
     method: 'POST',
     body: JSON.stringify({
       record_type: 'business',
       entity_id: '11000000-0000-0000-0000-000000000000',
-      title: nombre,
-      // apellidos column is NOT NULL in the shadow table; '' satisfies it and the
-      // def now marks it optional. Full name is kept in `nombre`.
-      data: { nombre, apellidos: '', cedula },
+      title: `${nombre} ${apellidos}`.trim(),
+      data: { nombre, apellidos, cedula },
       active: true,
     }),
   });
