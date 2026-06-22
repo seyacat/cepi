@@ -182,7 +182,9 @@ export async function createPatient({ nombre, cedula }) {
       record_type: 'business',
       entity_id: '11000000-0000-0000-0000-000000000000',
       title: nombre,
-      data: { nombre, cedula },
+      // apellidos column is NOT NULL in the shadow table; '' satisfies it and the
+      // def now marks it optional. Full name is kept in `nombre`.
+      data: { nombre, apellidos: '', cedula },
       active: true,
     }),
   });
