@@ -887,19 +887,29 @@ onMounted(() => {
 // Refresh the sidebar list whenever the active session id changes (new
 // session created on first message, or user switches sessions).
 watch(sessionId, () => { refreshSessions(); });
+
+// Exposed to ChatShell (WhatsApp-style master list): open a patient as a chat
+// (fresh session + bind), or start a general consultation.
+function openPatient(uuid) {
+  if (!uuid) return;
+  newSession();
+  send('activar paciente ' + uuid);
+}
+function newGeneral() {
+  newSession();
+}
+defineExpose({ openPatient, newGeneral });
 </script>
 
 <style scoped>
 .chat-wrap {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 16px;
+  display: flex;
   height: 100%;
   min-height: 0;
   position: relative;
 }
 .side-toggle {
-  display: none;
+  display: flex; align-items: center; justify-content: center;
   position: absolute;
   top: 8px; left: 8px;
   z-index: 30;
@@ -950,11 +960,19 @@ watch(sessionId, () => { refreshSessions(); });
   .patient-bar { padding-left: 52px; }
 }
 .side {
-  background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+  position: fixed;
+  top: var(--header-h); left: 0;
+  height: calc(100dvh - var(--header-h));
+  width: 80vw; max-width: 300px;
+  z-index: 25;
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  background: #fff; border-right: 1px solid var(--border); padding: 16px;
   font-size: 14px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-  min-height: 0; overflow-y: auto;
+  overflow-y: auto;
 }
+.chat-wrap.side-open .side { transform: translateX(0); }
+.chat-wrap.side-open .side-backdrop { display: block; }
 .side h3 {
   font-size: 12px; text-transform: uppercase; color: var(--accent);
   margin: 0 0 8px; letter-spacing: .04em; font-weight: 700;
@@ -1038,7 +1056,7 @@ watch(sessionId, () => { refreshSessions(); });
 .ctx .link { background: transparent; color: var(--text-muted); border: 0; padding: 0; cursor: pointer; }
 
 .main {
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; flex: 1; min-width: 0;
   background: #fff; border: 1px solid var(--border); border-radius: 12px;
   min-height: 0; overflow: hidden;
   transition: background 80ms ease;

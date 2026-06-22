@@ -30,7 +30,7 @@
       </template>
       <template v-else>
         <AdminUsers v-if="showAdmin" />
-        <Chat v-else :user="user" />
+        <ChatShell v-else :user="user" />
       </template>
     </main>
     </template>
@@ -44,8 +44,9 @@ import Register from './components/Register.vue';
 import VerifyEmail from './components/VerifyEmail.vue';
 import AdminUsers from './components/AdminUsers.vue';
 import PendingApproval from './components/PendingApproval.vue';
-import Chat  from './components/Chat.vue';
+import ChatShell from './components/ChatShell.vue';
 import { whoami, logout } from './api.js';
+import { bindBackState } from './useBackStack.js';
 
 const user = ref(null);
 const authed = ref(false);
@@ -63,6 +64,12 @@ function goLogin() {
   view.value = 'login';
   try { history.replaceState({}, '', '/'); } catch { /* */ }
 }
+
+// Device/browser Back navigates within the app (register/verify/admin) instead
+// of leaving the page. The chat list↔detail Back is handled inside ChatShell.
+bindBackState(() => view.value === 'register', () => { view.value = 'login'; });
+bindBackState(() => view.value === 'verify', () => { goLogin(); }, { immediate: true });
+bindBackState(() => showAdmin.value, () => { showAdmin.value = false; });
 const dark = ref(localStorage.getItem('cepi.theme') === 'dark');
 
 function applyTheme() {

@@ -162,6 +162,17 @@ export async function whoami() {
   return call('/api/auth/me', { method: 'GET' });
 }
 
+// List patients (entity_definition 11000000-…) for the WhatsApp-style chat list.
+// PII is redacted server-side per the caller's role.
+export async function listPatients({ limit = 500 } = {}) {
+  const params = new URLSearchParams({
+    type: 'business',
+    entity_id: '11000000-0000-0000-0000-000000000000',
+    limit: String(limit),
+  });
+  return call(`/api/entities?${params.toString()}`, { method: 'GET' });
+}
+
 export async function loadBotSession(sessionId) {
   return call(`/api/bot/session/${encodeURIComponent(sessionId)}`, { method: 'GET' });
 }
