@@ -63,6 +63,23 @@ export async function googleLogin(credential) {
   return res;
 }
 
+// ── Admin (user management) ────────────────────────────────────────────────
+export async function adminListUsers(role) {
+  const q = role ? `?role=${encodeURIComponent(role)}` : '';
+  return call(`/api/admin/users${q}`, { method: 'GET' });
+}
+
+export async function adminListRoles() {
+  return call('/api/admin/roles', { method: 'GET' });
+}
+
+export async function adminUpdateUser(id, patch) {
+  return call(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
 export function loadSessionId() {
   return localStorage.getItem('cepi.session_id') || null;
 }

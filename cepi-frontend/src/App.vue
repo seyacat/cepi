@@ -14,6 +14,7 @@
       <div class="header-right">
         <span v-if="user" class="user">
           <span class="user-id">{{ user.email }} · {{ user.role }}</span>
+          <button v-if="isAdmin" @click="showAdmin = !showAdmin">{{ showAdmin ? 'Chat' : 'Admin' }}</button>
           <button @click="toggleDark" :title="dark ? 'Modo claro' : 'Modo oscuro'">{{ dark ? '☀' : '☾' }}</button>
           <button @click="onLogout">Salir</button>
         </span>
@@ -25,21 +26,27 @@
         <Register v-if="view === 'register'" @go-login="view = 'login'" />
         <Login v-else @logged-in="onLoggedIn" @go-register="view = 'register'" />
       </template>
-      <Chat v-else :user="user" />
+      <template v-else>
+        <AdminUsers v-if="showAdmin" />
+        <Chat v-else :user="user" />
+      </template>
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import Login from './components/Login.vue';
 import Register from './components/Register.vue';
 import VerifyEmail from './components/VerifyEmail.vue';
+import AdminUsers from './components/AdminUsers.vue';
 import Chat  from './components/Chat.vue';
 import { whoami, logout } from './api.js';
 
 const user = ref(null);
 const authed = ref(false);
+const showAdmin = ref(false);
+const isAdmin = computed(() => !!user.value?.permissions?.includes('*:*:*:*'));
 // Lightweight view routing (no vue-router): a ?verify=<token> link lands on the
 // verification view; otherwise the login/register toggle is shown.
 const _params = new URLSearchParams(window.location.search);
@@ -82,6 +89,7 @@ function onLogout() {
   logout();
   user.value = null;
   authed.value = false;
+  showAdmin.value = false;
 }
 
 onMounted(refresh);
