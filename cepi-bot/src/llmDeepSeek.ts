@@ -75,6 +75,10 @@ export class DeepSeekLLMAdapter implements LLMAdapter {
     this.client = new OpenAI({
       apiKey,
       baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
+      // Force Node's native (undici) fetch. Otherwise the SDK falls back to
+      // node-fetch, whose Gunzip path throws ERR_STREAM_PREMATURE_CLOSE on
+      // DeepSeek's gzipped responses. Native fetch decodes gzip correctly.
+      fetch: (globalThis as any).fetch,
     });
     this.model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
     this.systemPrompt = process.env.CEPI_AGENT_SYSTEM || DEFAULT_SYSTEM_PROMPT;
