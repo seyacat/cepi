@@ -20,8 +20,12 @@
       </div>
     </header>
     <main>
-      <Login v-if="!authed" @logged-in="onLoggedIn" />
-      <Chat   v-else        :user="user" />
+      <VerifyEmail v-if="view === 'verify'" :token="verifyToken" @done="goLogin" />
+      <template v-else-if="!authed">
+        <Register v-if="view === 'register'" @go-login="view = 'login'" />
+        <Login v-else @logged-in="onLoggedIn" @go-register="view = 'register'" />
+      </template>
+      <Chat v-else :user="user" />
     </main>
   </div>
 </template>
@@ -29,11 +33,24 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import Login from './components/Login.vue';
+import Register from './components/Register.vue';
+import VerifyEmail from './components/VerifyEmail.vue';
 import Chat  from './components/Chat.vue';
 import { whoami, logout } from './api.js';
 
 const user = ref(null);
 const authed = ref(false);
+// Lightweight view routing (no vue-router): a ?verify=<token> link lands on the
+// verification view; otherwise the login/register toggle is shown.
+const _params = new URLSearchParams(window.location.search);
+const verifyToken = ref(_params.get('verify') || '');
+const view = ref(verifyToken.value ? 'verify' : 'login');
+
+function goLogin() {
+  verifyToken.value = '';
+  view.value = 'login';
+  try { history.replaceState({}, '', '/'); } catch { /* */ }
+}
 const dark = ref(localStorage.getItem('cepi.theme') === 'dark');
 
 function applyTheme() {

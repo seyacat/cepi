@@ -9,6 +9,7 @@
     </label>
     <button type="submit" :disabled="busy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
     <p v-if="error" class="error">{{ error }}</p>
+    <p class="hint">¿No tenés cuenta? <a href="#" @click.prevent="$emit('go-register')">Crear cuenta</a></p>
   </form>
 </template>
 
@@ -16,7 +17,7 @@
 import { ref } from 'vue';
 import { login } from '../api.js';
 
-const emit = defineEmits(['logged-in']);
+const emit = defineEmits(['logged-in', 'go-register']);
 const email = ref('');
 const password = ref('');
 const busy  = ref(false);
@@ -61,4 +62,5 @@ button:hover:not([disabled]) { background: var(--accent-hover, #4da8cf); }
 button[disabled] { opacity: .6; cursor: not-allowed; }
 .error { color: #dc2626; font-size: 13px; margin: 4px 0 0; }
 .hint  { color: var(--text-muted); font-size: 12px; margin: 4px 0 0; }
+.hint a { color: var(--accent); text-decoration: none; }
 </style>

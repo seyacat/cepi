@@ -40,6 +40,17 @@ export function logout() {
   // Future: hit a /api/bot/logout to mark bot_session.estado = 'cerrada'.
 }
 
+export async function register({ name, email, password, phone, cedula }) {
+  return call('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password, phone, cedula }),
+  });
+}
+
+export async function verifyEmail(token) {
+  return call(`/api/auth/verify-email?token=${encodeURIComponent(token)}`, { method: 'GET' });
+}
+
 export function loadSessionId() {
   return localStorage.getItem('cepi.session_id') || null;
 }
