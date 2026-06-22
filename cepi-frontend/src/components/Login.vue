@@ -9,7 +9,6 @@
     </label>
     <button type="submit" :disabled="busy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
     <p v-if="error" class="error">{{ error }}</p>
-    <p class="hint">Dev: admin@erp.com / Admin123!</p>
   </form>
 </template>
 
@@ -18,8 +17,8 @@ import { ref } from 'vue';
 import { login } from '../api.js';
 
 const emit = defineEmits(['logged-in']);
-const email = ref('admin@erp.com');
-const password = ref('Admin123!');
+const email = ref('');
+const password = ref('');
 const busy  = ref(false);
 const error = ref('');
 
