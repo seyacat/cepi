@@ -51,6 +51,18 @@ export async function verifyEmail(token) {
   return call(`/api/auth/verify-email?token=${encodeURIComponent(token)}`, { method: 'GET' });
 }
 
+export async function googleLogin(credential) {
+  const res = await call('/api/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ credential }),
+  });
+  if (res?.token) {
+    localStorage.setItem('cepi.jwt', res.token);
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('cepi:auth'));
+  }
+  return res;
+}
+
 export function loadSessionId() {
   return localStorage.getItem('cepi.session_id') || null;
 }

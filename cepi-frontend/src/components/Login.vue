@@ -8,6 +8,8 @@
       <input v-model="password" type="password" autocomplete="current-password" required />
     </label>
     <button type="submit" :disabled="busy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
+    <div class="sep"><span>o</span></div>
+    <GoogleSignIn @credential="onGoogle" />
     <p v-if="error" class="error">{{ error }}</p>
     <p class="hint">¿No tenés cuenta? <a href="#" @click.prevent="$emit('go-register')">Crear cuenta</a></p>
   </form>
@@ -15,7 +17,8 @@
 
 <script setup>
 import { ref } from 'vue';
-import { login } from '../api.js';
+import { login, googleLogin } from '../api.js';
+import GoogleSignIn from './GoogleSignIn.vue';
 
 const emit = defineEmits(['logged-in', 'go-register']);
 const email = ref('');
@@ -28,6 +31,19 @@ async function submit() {
   error.value = '';
   try {
     await login(email.value, password.value);
+    emit('logged-in');
+  } catch (e) {
+    error.value = e.message || String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function onGoogle(credential) {
+  busy.value = true;
+  error.value = '';
+  try {
+    await googleLogin(credential);
     emit('logged-in');
   } catch (e) {
     error.value = e.message || String(e);
@@ -63,4 +79,7 @@ button[disabled] { opacity: .6; cursor: not-allowed; }
 .error { color: #dc2626; font-size: 13px; margin: 4px 0 0; }
 .hint  { color: var(--text-muted); font-size: 12px; margin: 4px 0 0; }
 .hint a { color: var(--accent); text-decoration: none; }
+.sep { display: flex; align-items: center; text-align: center; color: var(--text-muted); font-size: 12px; margin: 2px 0; }
+.sep::before, .sep::after { content: ''; flex: 1; border-bottom: 1px solid var(--border); }
+.sep span { padding: 0 10px; }
 </style>
