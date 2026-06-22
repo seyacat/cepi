@@ -19,9 +19,9 @@ export const BOT_SESSION_ENTITY_ID = '17000000-0000-0000-0000-000000000000';
 export interface PendingAction {
   /** Friendly summary shown to the user. */
   summary: string;
-  /** MCP tool to invoke on confirm. */
-  tool: string;
-  args: Record<string, unknown>;
+  /** MCP tool to invoke on confirm. Omitted when `batch` is used. */
+  tool?: string;
+  args?: Record<string, unknown>;
   /** What the bot says on success. {{id}} is replaced by the new entity id. */
   successMessage: string;
   /** ISO timestamp; server may expire after some time (not enforced yet). */

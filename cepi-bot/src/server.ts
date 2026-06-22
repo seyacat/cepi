@@ -360,7 +360,10 @@ async function executePendingActionResult(
     };
   }
 
-  const result = await mcp.call(pa.tool, pa.args);
+  // Single-action path (the `batch` case returned above, so tool/args exist).
+  const paTool = String(pa.tool);
+  const paArgs = (pa.args || {}) as Record<string, any>;
+  const result = await mcp.call(paTool, paArgs);
   const newId  = result.ok ? (result.data?.id || '') : '';
   const ackText = result.ok
     ? pa.successMessage.replace(/\{\{id\}\}/g, newId)
@@ -369,22 +372,22 @@ async function executePendingActionResult(
   // PAPER §13.3 — audit: every successful tool call leaves a chatter note.
   if (result.ok) {
     const targetForNote =
-      (pa.tool === 'entities.create' && newId) ? newId :
-      (pa.tool === 'entities.update' && (pa.args as any)?.id) ? (pa.args as any).id :
-      (pa.tool === 'entities.request_review' && (pa.args as any)?.entity_id) ? (pa.args as any).entity_id :
+      (paTool === 'entities.create' && newId) ? newId :
+      (paTool === 'entities.update' && paArgs?.id) ? paArgs.id :
+      (paTool === 'entities.request_review' && paArgs?.entity_id) ? paArgs.entity_id :
       null;
     if (targetForNote) {
       await mcp.call('chatter.add_note', {
         entity_id: targetForNote,
-        body: `🤖 Acción ejecutada por el agente: \`${pa.tool}\` — ${pa.summary}`,
+        body: `🤖 Acción ejecutada por el agente: \`${paTool}\` — ${pa.summary}`,
       }).catch(() => {});
     }
   }
 
   // Auto-activate newly created clinical entities so the user can keep working.
   let extraForm: BotForm | null = null;
-  if (result.ok && pa.tool === 'entities.create' && newId) {
-    const createdType = (pa.args as any)?.entity_id;
+  if (result.ok && paTool === 'entities.create' && newId) {
+    const createdType = paArgs?.entity_id;
     if (createdType === '11000000-0000-0000-0000-000000000000') {
       session.active_patient_id = newId;
       if ((session.extracted_slots as any)?.mode !== 'patient_info') {
@@ -401,6 +404,17 @@ async function executePendingActionResult(
           ficha_done: [],
           ...(firstGroup ? { ficha_current: firstGroup } : {}),
           active_form: extraForm,
+        };
+      } else {
+        // patient_info (non-presential): no ficha is opened, but the
+        // patient_new form that triggered this create is still persisted as
+        // active_form. Clear it — otherwise every later reply re-attaches it
+        // (server echoes the persisted form on any response that lacks one),
+        // and adapters that walk patient_new (Telegram) would restart the
+        // walk on each turn. extraForm stays null.
+        session.extracted_slots = {
+          ...(session.extracted_slots || {}),
+          active_form: null,
         };
       }
     } else if (createdType === '12000000-0000-0000-0000-000000000000') {
@@ -1292,6 +1306,174 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
           pending_action: session.pending_action,
         });
+      }
+
+      // ══════════════════════════════════════════════════════════════════
+      // Telemedicina (TELEMEDICINA.md): el episodio es el "caso" que viaja
+      // primario → turno → especialistas. Comandos:
+      //   enviar caso [motivo]        (médico primario)  → estado 'enviada' + bandeja de turno
+      //   entrantes | turno           (residente)        → bandeja compartida de entrantes
+      //   reclamar [<uuid>]           (residente)        → claim → estado 'en_triage'
+      //   derivar a <especialidad> .. (residente)        → request_review a círculo + 'derivada'
+      //   responder <texto>           (residente/espec.) → recomendación + 'respondida' + notifica primario
+      // ══════════════════════════════════════════════════════════════════
+
+      // ── "enviar caso [motivo]" — el primario envía el episodio al turno ──
+      const sendCaseMatch = message.trim().match(/^\/?\s*enviar\s+caso\b\s*(.*)$/i);
+      if (sendCaseMatch) {
+        if (!activeEpisodeId) {
+          const ackText = 'Necesito un episodio activo (la ficha del caso) antes de enviarlo. Activá o creá uno.';
+          session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns,
+            toolCalls: [], active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const motivo = (sendCaseMatch[1] || '').trim();
+        const me2 = await mcp.call('auth.whoami', {});
+        const userId2 = ((me2 as any)?.data?.user?.id as string) || null;
+        const reason = motivo || 'Teleconsulta enviada a turno para triage';
+        session.pending_action = {
+          summary: `Enviar episodio ${activeEpisodeId} a la bandeja de turno`,
+          batch: [
+            { tool: 'entities.update', args: { id: activeEpisodeId, record_type: 'business',
+              data: { medico_primario_id: userId2, ...(motivo ? { motivo_consulta: motivo } : {}) } } },
+            { tool: 'entities.request_review', args: { entity_id: activeEpisodeId, group_id: 'turno',
+              reason, status_value: 'enviada' } },
+          ],
+          successMessage: 'Caso enviado a la bandeja de turno. Los médicos en turno fueron notificados.',
+          createdAt: new Date().toISOString(),
+        };
+        if (!CONFIRM_GATE_ENABLED) return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        const ackText = `Voy a enviar el episodio ${activeEpisodeId} a la bandeja de turno.\n  • motivo: ${reason}\n\n¿Confirmás? (sí / no)`;
+        session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId, pending_action: session.pending_action });
+      }
+
+      // ── "entrantes" / "turno" — bandeja compartida de casos por triagear ──
+      if (/^\/?\s*(entrantes|turno|bandeja(?:\s+de)?\s+turno)\s*$/i.test(message.trim())) {
+        const calls: any[] = [];
+        const seen = new Set<string>();
+        const rows: any[] = [];
+        for (const estado of ['enviada', 'en_triage']) {
+          const r = await mcp.call('entities.list', { type: EPISODE_ENTITY_ID, filter: { estado }, limit: 100 });
+          calls.push({ name: 'entities.list', args: { type: EPISODE_ENTITY_ID, filter: { estado } }, result: r });
+          for (const e of (Array.isArray((r as any)?.data) ? (r as any).data : [])) {
+            if (!seen.has(e.id)) { seen.add(e.id); rows.push(e); }
+          }
+        }
+        const lines = rows.map((e: any) => {
+          const d = e.data || {};
+          const who = d.responsable_actual_id ? ` · reclamado` : '';
+          return `  • \`${String(e.id).slice(0, 8)}…\` [${d.estado || '?'}] ${d.motivo_consulta || e.title || 's/motivo'}${who}`;
+        });
+        const text = rows.length
+          ? `**Bandeja de turno** (${rows.length} caso(s) entrante(s)):\n${lines.join('\n')}\n\nUsá \`reclamar <uuid>\` para tomar uno.`
+          : 'Bandeja de turno vacía: no hay casos entrantes.';
+        session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns, toolCalls: calls,
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
+      // ── "reclamar [<uuid>]" — el médico en turno toma un caso ──
+      const claimMatch = message.trim().match(/^\/?\s*reclamar\b\s*([0-9a-f-]{36})?\s*$/i);
+      if (claimMatch) {
+        const target = claimMatch[1] || activeEpisodeId;
+        if (!target) {
+          const ackText = 'Indicá qué caso reclamar: `reclamar <uuid>` (o activá un episodio).';
+          session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns, toolCalls: [],
+            active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const r = await mcp.call('entities.claim', { entity_id: target, status_value: 'en_triage' });
+        let text: string;
+        if ((r as any)?.ok) {
+          session.active_episode_id = target;
+          activeEpisodeId = target;
+          text = `Reclamaste el caso \`${String(target).slice(0, 8)}…\` (ahora en triage). Quedó como tu episodio activo.\nPodés \`responder <texto>\` o \`derivar a <especialidad> <motivo>\`.`;
+        } else {
+          text = `No pude reclamar el caso: ${(r as any)?.error || 'error'}.`;
+        }
+        session.turns = [...session.turns, { role: 'user', content: message },
+          { role: 'tool', tool_name: 'entities.claim', content: JSON.stringify(r) }, { role: 'assistant', content: text }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text, history: session.turns,
+          toolCalls: [{ name: 'entities.claim', args: { entity_id: target, status_value: 'en_triage' }, result: r }],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+      }
+
+      // ── "derivar a <especialidad-slug> [motivo]" — al círculo de especialistas ──
+      const deriveMatch = message.trim().match(/^\/?\s*derivar\s+a\s+([a-z][a-z0-9_-]+)\b\s*(.*)$/i);
+      if (deriveMatch) {
+        if (!activeEpisodeId) {
+          const ackText = 'Activá o reclamá un episodio antes de derivarlo.';
+          session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+          await saveSession(mcp, session);
+          return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns, toolCalls: [],
+            active_patient_id: activePatientId, active_episode_id: activeEpisodeId });
+        }
+        const slug = deriveMatch[1].toLowerCase();
+        const reason = (deriveMatch[2] || '').trim() || `Derivado al círculo "${slug}" para segunda opinión`;
+        session.pending_action = {
+          summary: `Derivar episodio ${activeEpisodeId} al círculo "${slug}"`,
+          batch: [
+            { tool: 'entities.update', args: { id: activeEpisodeId, record_type: 'business',
+              data: { derivado_a: slug, especialidad: slug } } },
+            { tool: 'entities.request_review', args: { entity_id: activeEpisodeId, group_id: slug,
+              reason, status_value: 'derivada' } },
+          ],
+          successMessage: `Caso derivado al círculo "${slug}". Sus especialistas fueron notificados.`,
+          createdAt: new Date().toISOString(),
+        };
+        if (!CONFIRM_GATE_ENABLED) return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        const ackText = `Voy a derivar el episodio ${activeEpisodeId} al círculo "${slug}".\n  • motivo: ${reason}\n\n¿Confirmás? (sí / no)`;
+        session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId, pending_action: session.pending_action });
+      }
+
+      // ── "responder <texto>" — recomendación diagnóstica que vuelve al primario ──
+      const answerMatch = message.trim().match(/^\/?\s*responder\s+([\s\S]+)$/i);
+      if (answerMatch && activeEpisodeId) {
+        const recomendacion = answerMatch[1].trim();
+        const me3 = await mcp.call('auth.whoami', {});
+        const userId3 = ((me3 as any)?.data?.user?.id as string) || null;
+        const cur = await mcp.call('entities.get', { id: activeEpisodeId });
+        const curData = ((cur as any)?.ok && (cur as any)?.data?.data) ? (cur as any).data.data : {};
+        const primarioId = curData.medico_primario_id || null;
+        const today = new Date().toISOString().slice(0, 10);
+        const batch: any[] = [
+          { tool: 'entities.update', args: { id: activeEpisodeId, record_type: 'business',
+            data: { recomendacion, recomendacion_por: userId3, recomendacion_at: today, estado: 'respondida' } } },
+        ];
+        if (primarioId) {
+          // Notifica al primario. recomendacion es contenido clínico (no PII §13.3.1).
+          batch.push({ tool: 'reminders.create', args: {
+            entity_id: activeEpisodeId, owner_user_id: primarioId,
+            title: 'Respuesta a tu teleconsulta',
+            message: recomendacion,
+            due_at: new Date().toISOString(),
+            channels: ['in_app', 'email', 'telegram', 'web_push'],
+          } });
+        }
+        session.pending_action = {
+          summary: `Responder teleconsulta ${activeEpisodeId}`,
+          batch,
+          successMessage: primarioId
+            ? 'Recomendación registrada y notificada al médico primario.'
+            : 'Recomendación registrada (sin médico primario asociado para notificar).',
+          createdAt: new Date().toISOString(),
+        };
+        if (!CONFIRM_GATE_ENABLED) return res.json(await executePendingActionResult(session, mcp, message, sessionId));
+        const ackText = `Voy a registrar tu recomendación en el episodio ${activeEpisodeId} y notificar al primario.\n\n¿Confirmás? (sí / no)`;
+        session.turns = [...session.turns, { role: 'user', content: message }, { role: 'assistant', content: ackText }];
+        await saveSession(mcp, session);
+        return res.json({ ok: true, session_id: sessionId, text: ackText, history: session.turns, toolCalls: [],
+          active_patient_id: activePatientId, active_episode_id: activeEpisodeId, pending_action: session.pending_action });
       }
 
       // ── Stage "cerrar episodio [YYYY-MM-DD] [motivo]" behind gate ──

@@ -26,7 +26,11 @@ export async function login(email, password) {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
-  if (res?.token) localStorage.setItem('cepi.jwt', res.token);
+  if (res?.token) {
+    localStorage.setItem('cepi.jwt', res.token);
+    // Let the PWA layer (re)subscribe to web push now that we have a token.
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('cepi:auth'));
+  }
   return res;
 }
 
@@ -49,7 +53,69 @@ export async function chat(message, sessionId, extra = {}) {
   if (sessionId) body.session_id = sessionId;
   // Structured form submission ({ form_id, data }) — used by ficha sections.
   if (extra.formSubmission) body.form_submission = extra.formSubmission;
-  return call('/api/bot/chat', { method: 'POST', body: JSON.stringify(body) });
+  try {
+    return await call('/api/bot/chat', { method: 'POST', body: JSON.stringify(body) });
+  } catch (e) {
+    // Offline / network failure → queue the turn and flush on reconnect (PWA
+    // offline send queue, TELEMEDICINA.md §6C). Only queue real connectivity
+    // failures, not server-side 4xx/5xx.
+    if (isNetworkError(e)) {
+      enqueueOutbox(body);
+      return {
+        text: '📥 Sin conexión: tu mensaje quedó en cola y se enviará automáticamente al reconectar.',
+        offline_queued: true,
+      };
+    }
+    throw e;
+  }
+}
+
+// ── Offline send queue (PWA) ──────────────────────────────────────────────
+const OUTBOX_KEY = 'cepi.outbox';
+
+function isNetworkError(e) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  const m = String(e?.message || e || '');
+  return /Failed to fetch|NetworkError|network|HTTP 0\b/i.test(m);
+}
+
+function readOutbox() {
+  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch { return []; }
+}
+
+function enqueueOutbox(body) {
+  const q = readOutbox();
+  q.push({ body, ts: Date.now() });
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(q));
+}
+
+export function outboxSize() {
+  return readOutbox().length;
+}
+
+/** Re-send every queued chat turn in order; keep the ones that still fail. */
+export async function flushOutbox() {
+  const q = readOutbox();
+  if (!q.length) return 0;
+  const remaining = [];
+  for (const item of q) {
+    try {
+      await call('/api/bot/chat', { method: 'POST', body: JSON.stringify(item.body) });
+    } catch (e) {
+      if (isNetworkError(e)) remaining.push(item); // still offline — keep
+      // a non-network error means the turn was processed/invalid: drop it
+    }
+  }
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(remaining));
+  return q.length - remaining.length;
+}
+
+/** Wire the queue to flush whenever the browser regains connectivity. */
+export function initOfflineQueue() {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('online', () => { flushOutbox().catch(() => {}); });
+  // Opportunistic flush on startup in case we came back online while closed.
+  if (navigator.onLine) flushOutbox().catch(() => {});
 }
 
 export async function whoami() {

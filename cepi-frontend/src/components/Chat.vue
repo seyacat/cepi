@@ -78,6 +78,14 @@
         <button @click="send('resumen')"         :disabled="busy || !activePatient">resumen paciente</button>
         <button @click="send('exportar')"        :disabled="busy || !activePatient">⤓ exportar</button>
       </div>
+
+      <div class="shortcuts shortcuts-tele">
+        <div class="sc-title">Telemedicina</div>
+        <button @click="send('enviar caso')"  :disabled="busy || !activeEpisode" title="Envía el episodio activo a la bandeja de turno">📤 enviar caso</button>
+        <button @click="send('turno')"        :disabled="busy">📥 bandeja turno</button>
+        <button @click="send('reclamar')"     :disabled="busy || !activeEpisode" title="Reclama el episodio activo (en triage)">🙋 reclamar</button>
+        <button @click="enableNotifs"         :disabled="busy" title="Activar notificaciones push de casos">🔔 notificaciones</button>
+      </div>
     </aside>
 
     <section
@@ -281,6 +289,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { chat, saveSessionId, uploadAttachment, listBotSessions, loadBotSession, getEpisodeImages } from '../api.js';
+import { enableWebPush } from '../pwa.js';
 import ToolResult from './ToolResult.vue';
 import BotForm from './BotForm.vue';
 import ImageGallery from './ImageGallery.vue';
@@ -308,6 +317,12 @@ const pending = ref(null);
 const quickReplies = ref([]);
 const botForm = ref(null);
 const botFormWrap = ref(null);
+
+// PWA: opt-in to Web Push notifications (caso entrante / derivación / respuesta).
+async function enableNotifs() {
+  error.value = '';
+  error.value = await enableWebPush();
+}
 const bookmarks = ref([]);
 // Group bookmarks into ordered category sections. Bookmarks arrive already
 // ordered and grouped by category (consecutive), so a single pass suffices.

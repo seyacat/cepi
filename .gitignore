@@ -44,3 +44,6 @@ frontend/generate-icons.mjs
 docs/PAPER.html
 docs/PAPER.pdf
 backups/
+
+# vite transient config bundles
+*.timestamp-*.mjs

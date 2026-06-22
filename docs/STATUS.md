@@ -4,6 +4,65 @@ Estado del proyecto al cierre de la sesión actual.
 
 ---
 
+## Sesión 2026-06-09 — Telemedicina (primario → turno → especialistas)
+
+Capa de teleconsulta sobre lo ya construido. Plan completo en
+`cepi-frontend/public/TELEMEDICINA.md` (reescrito, 16 secciones, aterrizado en
+código real). Decisiones del dueño: 1B (roles nuevos separados), 2B (el
+**episodio** es el caso que viaja, sin entidad nueva), 3A+B+C (estrategia de
+turno configurable), 4C (círculos por especialidad + nombrados), 5A (slice
+end-to-end), 6C (PWA instalable + Web Push + cola offline), 7A+B+C (4 canales),
+8A (ingesta texto libre con gate + guiada).
+
+- **Capacidad genérica de grupos de usuarios** (migración `015_user_groups.sql`):
+  `user_groups` + `user_group_members` + `push_subscriptions`. Router genérico
+  `/api/groups` (`groupsRouter.ts`, perms `groups:read`/`groups:manage`) + tools
+  MCP `groups.*`. Naming 100% genérico; el seed clínico le da semántica.
+- **claim / assign genéricos** (`routes/entities/{claim,assign}.ts`, montados en
+  `entitiesRouter`): `POST /api/entities/:id/claim` (bandeja compartida, 409 si
+  ya reclamado) y `/assign` (manual). Perms `entities:claim`/`entities:assign`.
+  Tools MCP `entities.claim`/`entities.assign`.
+- **request_review → grupo**: `requestReview.ts` ahora acepta `group_id`/`group_ids`
+  (UUID o slug), resuelve miembros vía `resolveGroupMemberIds`, dedup + excluye al
+  solicitante. Tool MCP extendida.
+- **2 canales de notificación nuevos** (`channels/{telegram,webPush}.ts`,
+  registrados): `telegram` (resuelve `users.data.telegram_id`, `TELEGRAM_BOT_TOKEN`)
+  y `web_push` (VAPID + `web-push` opcional vía import dinámico). Endpoint
+  `/api/push/subscribe` + `vapid-public-key` (`pushRouter.ts`). Ambos degradan a
+  `ok:false` sin config, como email sin Brevo.
+- **Seed telemedicina**: 3 roles nuevos `medico_primario`/`residente`/`especialista`
+  + bundles (002); episodio gana estados `enviada/en_triage/respondida/derivada` +
+  campos `responsable_actual_id`/`turno_claimed_by`/`derivado_a`/`especialidad`/
+  `prioridad`/`recomendacion`/`recomendacion_por`/`recomendacion_at`/
+  `medico_primario_id` (001). Grupos de especialidad/círculo + turno + 4 usuarios
+  demo + membresías (`007_telemedicine.sql`, en `apply.sh`).
+- **Comandos del bot** (`cepi-bot/src/server.ts`): `enviar caso [motivo]`,
+  `entrantes`/`turno`, `reclamar [<uuid>]`, `derivar a <especialidad> [motivo]`,
+  `responder <texto>` (notifica al primario por 4 canales). En `/help`.
+- **PWA sin dependencias** (`cepi-frontend`): `public/{manifest.webmanifest,sw.js,
+  icon.svg}` + registro/Web Push en `src/pwa.js` + cola de envíos offline en
+  `api.js` (`initOfflineQueue`/`flushOutbox`). Botones de turno + 🔔 en `Chat.vue`.
+- **Fix genérico de `columnSyncService`**: ahora **reconcilia** el CHECK de un
+  `select` cuando cambian sus `options` (drop+recreate si difiere, restaura el
+  previo si falla) — antes solo lo creaba una vez. Beneficia a cualquier dominio.
+- **Fix de permisos (latente)**: los roles clínicos solo tenían strings clínicos
+  (`episode:*`), que **no** los usan las rutas genéricas de entidades (autorizan
+  con `entity:<def>:record:{view_all,create,edit_all}`). Hasta ahora solo `admin`
+  podía escribir. El seed 002 ahora otorga ese CRUD genérico a los 5 roles clínicos
+  sobre paciente/episodio/diagnóstico/imagen, y la INSERT de bundles pasó a
+  `ON CONFLICT DO UPDATE` (idempotente-actualizable).
+
+**Verificación end-to-end (stack vivo, roles reales):** primario crea ficha →
+`enviar caso` (`enviada`, reminder al turno) → residente ve bandeja + `reclamar`
+(`en_triage`) → `derivar a dermatologia` (`derivada`, 2 reminders al círculo) →
+especialista `responder` (`respondida` + recomendación). ✅
+
+Tests: TodoERP backend **203 passed** (2 skipped; 1 preexistente roto
+`cross_type_parent`) — +21 nuevos (groups, claim/assign, review→grupo, drivers).
+cepi-bot **44 passed** (+5 regex de telemedicina). cepi-frontend build ✅.
+
+---
+
 ## Sesión 2026-05-27 — permisos, identidad externa, reset y ERP
 
 - **Permisos: un bundle por rol.** `medical-seed/002` ahora seedea un único

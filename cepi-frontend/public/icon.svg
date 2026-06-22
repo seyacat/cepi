@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="CEPI">
+  <rect width="512" height="512" rx="96" fill="#0f172a"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#6366f1" stroke-width="28"/>
+  <rect x="232" y="156" width="48" height="200" rx="14" fill="#e2e8f0"/>
+  <rect x="156" y="232" width="200" height="48" rx="14" fill="#e2e8f0"/>
+</svg>

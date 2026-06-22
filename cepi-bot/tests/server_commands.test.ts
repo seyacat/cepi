@@ -25,6 +25,12 @@ const RE = {
   imageResults:  /^\/?\s*mostrar\s+resultados?\s+(?:de\s+(?:las?\s+)?)?im[áa]gen(?:es)?\b\s*(.*)$/i,
   confirmYes:    /^\s*(s[ií]|si|confirmar|ok|adelante|yes)\s*$/i,
   confirmNo:     /^\s*(no|cancelar|cancel|abort)\s*$/i,
+  // Telemedicina
+  sendCase:      /^\/?\s*enviar\s+caso\b\s*(.*)$/i,
+  inbox:         /^\/?\s*(entrantes|turno|bandeja(?:\s+de)?\s+turno)\s*$/i,
+  claim:         /^\/?\s*reclamar\b\s*([0-9a-f-]{36})?\s*$/i,
+  derive:        /^\/?\s*derivar\s+a\s+([a-z][a-z0-9_-]+)\b\s*(.*)$/i,
+  answer:        /^\/?\s*responder\s+([\s\S]+)$/i,
 };
 
 const VALID_UUID = '11000000-0000-0000-1000-000000000001';
@@ -107,5 +113,42 @@ describe('command regexes', () => {
     for (const no of ['no', 'cancelar', 'abort', 'cancel']) {
       expect(no.match(RE.confirmNo)).not.toBeNull();
     }
+  });
+});
+
+describe('telemedicine command regexes', () => {
+  it('matches "enviar caso" with and without motivo', () => {
+    expect('enviar caso'.match(RE.sendCase)?.[1]).toBe('');
+    expect('enviar caso lesión pigmentada en espalda'.match(RE.sendCase)?.[1])
+      .toBe('lesión pigmentada en espalda');
+    expect('/enviar caso'.match(RE.sendCase)).not.toBeNull();
+  });
+
+  it('matches the turno inbox aliases', () => {
+    for (const c of ['entrantes', 'turno', 'bandeja turno', 'bandeja de turno', '/entrantes']) {
+      expect(c.match(RE.inbox), c).not.toBeNull();
+    }
+    expect('entrantes ya'.match(RE.inbox)).toBeNull();
+  });
+
+  it('matches "reclamar" bare and with a uuid', () => {
+    expect('reclamar'.match(RE.claim)).not.toBeNull();
+    expect(`reclamar ${VALID_UUID}`.match(RE.claim)?.[1]).toBe(VALID_UUID);
+  });
+
+  it('matches "derivar a <especialidad> [motivo]"', () => {
+    const m = 'derivar a dermatologia sospecha de melanoma'.match(RE.derive);
+    expect(m?.[1]).toBe('dermatologia');
+    expect(m?.[2]).toBe('sospecha de melanoma');
+    expect('derivar a comite_tumores'.match(RE.derive)?.[1]).toBe('comite_tumores');
+    // a specialty slug is required
+    expect('derivar a'.match(RE.derive)).toBeNull();
+  });
+
+  it('matches "responder <texto>" including multi-line', () => {
+    expect('responder probable dermatitis de contacto, indicar corticoide'.match(RE.answer)?.[1])
+      .toBe('probable dermatitis de contacto, indicar corticoide');
+    expect('responder linea1\nlinea2'.match(RE.answer)?.[1]).toBe('linea1\nlinea2');
+    expect('responder'.match(RE.answer)).toBeNull();
   });
 });
