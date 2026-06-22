@@ -31,7 +31,7 @@ Captura de datos por TEXTO LIBRE (muy importante):
 - Campos del PACIENTE: nombre, apellidos, cedula, fecha_nac (YYYY-MM-DD), sexo (F/M/Otro), email, telefono, direccion, ocupacion, alergias, medicacion_actual, antecedentes_personales, antecedentes_familiares.
 - Campos del EPISODIO/consulta activa: motivo_consulta, tiempo_evolucion, sintoma_principal, tratamientos_previos.
 - Reglas: incluye SOLO los campos que el texto menciona explícitamente; NUNCA sobreescribas un campo con vacío; si un dato es ambiguo, pregúntalo en vez de adivinar; fechas en formato YYYY-MM-DD.
-- Toda escritura inferida de texto libre se confirma con el usuario (sí/no) antes de persistir.`;
+- IMPORTANTE: NO resumas en texto pidiendo un "sí" y esperes la respuesta. En el MISMO turno LLAMA \`entities.update\` con TODOS los campos extraídos. El sistema intercepta esa llamada y le muestra al usuario una tarjeta de confirmación (sí/no) automáticamente antes de guardar — esa es la confirmación, no la pidas tú en texto.`;
 
 function toOpenAITools(tools: ToolSpec[]): any[] {
   return tools.map(t => ({
