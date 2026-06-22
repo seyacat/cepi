@@ -9,10 +9,9 @@
     />
     <div class="shell-detail">
       <div v-if="isMobile && view === 'chat'" class="mchat-bar">
-        <button class="mback" aria-label="Volver a la lista" @click="view = 'list'">←</button>
-        <span class="mtitle">{{ selectedName || 'Consulta general' }}</span>
+        <button class="mback" aria-label="Volver a la lista" @click="view = 'list'">← Pacientes</button>
       </div>
-      <Chat ref="chatRef" :user="user" class="shell-chat" />
+      <IntakeChat ref="chatRef" :user="user" class="shell-chat" />
     </div>
   </div>
 </template>
@@ -20,7 +19,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
 import ChatList from './ChatList.vue';
-import Chat from './Chat.vue';
+import IntakeChat from './IntakeChat.vue';
 import { bindBackState } from '../useBackStack.js';
 
 defineProps({ user: Object });
@@ -43,7 +42,7 @@ function onSelect(p) {
   selectedId.value = p.id;
   selectedName.value = fullName(p);
   generalActive.value = false;
-  chatRef.value?.openPatient(p.id);
+  chatRef.value?.openPatient(p.id, fullName(p));
   if (isMobile.value) view.value = 'chat';
 }
 

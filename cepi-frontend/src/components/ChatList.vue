@@ -5,6 +5,17 @@
       <button class="reload" :disabled="busy" title="Refrescar" @click="load">↻</button>
     </div>
 
+    <button class="newpat" @click="showCreate = !showCreate">＋ Nuevo paciente</button>
+    <form v-if="showCreate" class="createform" @submit.prevent="create">
+      <input v-model="cNombre" placeholder="Nombre completo *" autocomplete="off" />
+      <input v-model="cCedula" placeholder="Cédula *" autocomplete="off" />
+      <div class="cf-actions">
+        <button type="submit" :disabled="creating || !cNombre.trim() || !cCedula.trim()">{{ creating ? 'Creando…' : 'Crear' }}</button>
+        <button type="button" class="cf-cancel" @click="showCreate = false">Cancelar</button>
+      </div>
+      <p v-if="createError" class="error">{{ createError }}</p>
+    </form>
+
     <button
       class="general"
       :class="{ active: activeId === null && generalActive }"
@@ -36,18 +47,42 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { listPatients } from '../api.js';
+import { listPatients, createPatient } from '../api.js';
 
 defineProps({
   activeId: { type: String, default: null },
   generalActive: { type: Boolean, default: false },
 });
-defineEmits(['select', 'general']);
+const emit = defineEmits(['select', 'general']);
 
 const all = ref([]);
 const q = ref('');
 const busy = ref(false);
 const error = ref('');
+
+const showCreate = ref(false);
+const cNombre = ref('');
+const cCedula = ref('');
+const creating = ref(false);
+const createError = ref('');
+
+async function create() {
+  if (!cNombre.value.trim() || !cCedula.value.trim()) return;
+  creating.value = true;
+  createError.value = '';
+  try {
+    const p = await createPatient({ nombre: cNombre.value.trim(), cedula: cCedula.value.trim() });
+    cNombre.value = '';
+    cCedula.value = '';
+    showCreate.value = false;
+    await load();
+    if (p?.id) emit('select', p);
+  } catch (e) {
+    createError.value = e.message || String(e);
+  } finally {
+    creating.value = false;
+  }
+}
 
 function fullName(p) {
   return [p.data?.nombre, p.data?.apellidos].filter(Boolean).join(' ') || p.title || 'Paciente';
@@ -118,6 +153,16 @@ defineExpose({ reload: load });
 .info { display: flex; flex-direction: column; min-width: 0; }
 .name { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cc { font-size: 0.78rem; color: var(--text-muted); }
+.newpat {
+  margin: 8px 10px 4px; padding: 9px; border: none; border-radius: 20px;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 0.88rem; cursor: pointer;
+}
+.createform { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 10px; border-bottom: 1px solid var(--border); }
+.createform input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 14px; }
+.cf-actions { display: flex; gap: 6px; }
+.cf-actions button { flex: 1; padding: 7px; border: none; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+.cf-actions button[disabled] { opacity: .55; cursor: not-allowed; }
+.cf-actions .cf-cancel { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
 .empty, .error { padding: 14px; color: var(--text-muted); font-size: 14px; }
 .error { color: #dc2626; }
 </style>
