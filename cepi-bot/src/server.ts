@@ -545,6 +545,7 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         // Most recent prior episode, summarised in one line for context.
         let prevLine = '';
         let lastEpisodeId: string | null = null;
+        let openEpisodeId: string | null = null;
         try {
           const er = await mcp.call('entities.list', {
             type: '12000000-0000-0000-0000-000000000000',
@@ -561,6 +562,12 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
             if (motivo) {
               prevLine = `Consulta anterior (${last?.data?.fecha || 's/f'}): ${motivo}.`;
             }
+            // The "current" consultation is the most recent episode still open
+            // (estado !== 'cerrado'). A patient has at most one open at a time;
+            // it stays current until it's closed, so we resume it instead of
+            // asking "¿nueva o anterior?".
+            const openEp = eps.find((e: any) => (e?.data?.estado || 'en_curso') !== 'cerrado');
+            openEpisodeId = (openEp?.id as string) || null;
           }
         } catch { /* no prior episode context */ }
 
@@ -594,35 +601,14 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           });
         }
 
-        // Atención mode. If the patient has a prior episode, ask whether to open
-        // a NEW consultation or continue the previous one — before creating it.
-        if (lastEpisodeId) {
-          session.active_episode_id = null;
-          session.extracted_slots = {
-            ...(session.extracted_slots || {}),
-            mode: 'patient',
-            patient_context: { id: pid, ...patientData },
-            pending_resume_episode: lastEpisodeId,
-            active_form: null,
-          };
-          const ackText = `${greet}\n\n¿Es una consulta nueva o continuamos la anterior?`;
-          session.turns = [...session.turns,
-            { role: 'user', content: message }, { role: 'assistant', content: ackText }];
-          await saveSession(mcp, session);
-          return res.json({
-            ok: true, session_id: sessionId, text: ackText, history: session.turns,
-            toolCalls: [], active_patient_id: session.active_patient_id,
-            active_episode_id: null, form: null,
-            quick_replies: [
-              { label: '🆕 Consulta nueva',   send: 'consulta nueva' },
-              { label: '▶️ Continuar anterior', send: 'continuar consulta' },
-            ],
-          });
-        }
-
-        // No prior episode → open a new consultation directly.
-        const episodeId = await openEpisodeFicha(mcp, session, pid);
-        session.active_episode_id = episodeId;
+        // Atención mode. No "¿nueva o anterior?" prompt: if the patient has an
+        // open consultation we resume it; only when none is open (every prior
+        // episode is `cerrado`, or there are none) do we open a new one. The
+        // open episode IS the current consultation until it's closed.
+        const resumeId = openEpisodeId;
+        session.active_episode_id = resumeId
+          ? resumeId
+          : await openEpisodeFicha(mcp, session, pid);
         const firstGroup = await firstIncompleteFichaGroup(mcp, session);
         const fichaForm = firstGroup
           ? await fichaGroupFormFilled(firstGroup, mcp, session)
@@ -632,13 +618,14 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           mode: 'patient',
           patient_context: { id: pid, ...patientData },
           form_state: { kind: 'ficha' },
-          ficha_done: [],
+          ...(resumeId ? {} : { ficha_done: [] }),
           ...(firstGroup ? { ficha_current: firstGroup } : {}),
           active_form: fichaForm,
         };
-        const ackText = `${greet}\n\n` + (fichaForm
-          ? 'Abrí una consulta nueva. Empecemos la ficha clínica:'
-          : 'Abrí una consulta nueva. La ficha ya está completa — revisá lo que quieras desde los marcadores.');
+        const lead = resumeId ? 'Continuamos la consulta en curso.' : 'Abrí una consulta nueva.';
+        const ackText = `${greet}\n\n` + lead + ' ' + (fichaForm
+          ? (resumeId ? 'Seguimos con la ficha clínica:' : 'Empecemos la ficha clínica:')
+          : 'La ficha ya está completa — revisá lo que quieras desde los marcadores.');
         session.turns = [...session.turns,
           { role: 'user', content: message }, { role: 'assistant', content: ackText }];
         await saveSession(mcp, session);
