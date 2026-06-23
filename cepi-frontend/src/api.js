@@ -90,6 +90,13 @@ export async function adminUpdateUser(id, patch) {
   });
 }
 
+export async function adminSetUserGroups(id, slugs) {
+  return call(`/api/admin/users/${encodeURIComponent(id)}/groups`, {
+    method: 'PUT',
+    body: JSON.stringify({ slugs }),
+  });
+}
+
 export function loadSessionId() {
   return localStorage.getItem('cepi.session_id') || null;
 }

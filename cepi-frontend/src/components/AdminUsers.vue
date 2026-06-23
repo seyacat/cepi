@@ -15,7 +15,7 @@
     <div class="table-wrap" v-if="rows.length">
       <table>
         <thead>
-          <tr><th>Nombre</th><th>Email</th><th>Tel/Cédula</th><th>Rol</th><th>Activo</th><th></th></tr>
+          <tr><th>Nombre</th><th>Email</th><th>Tel/Cédula</th><th>Rol</th><th>Círculos</th><th>Activo</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="u in rows" :key="u.id">
@@ -26,6 +26,20 @@
               <select v-model="u.role_id">
                 <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
               </select>
+            </td>
+            <td class="circles-cell">
+              <div class="chips" v-if="circles.length">
+                <button
+                  v-for="c in circles"
+                  :key="c.slug"
+                  type="button"
+                  class="chip"
+                  :class="{ on: u.circles.includes(c.slug) }"
+                  :title="c.name + (c.kind === 'specialty' ? ' (especialidad)' : ' (círculo)')"
+                  @click="toggleCircle(u, c.slug)"
+                >{{ u.circles.includes(c.slug) ? '✓ ' : '' }}{{ c.name }}</button>
+              </div>
+              <span v-else class="muted">—</span>
             </td>
             <td class="center"><input type="checkbox" v-model="u.active" /></td>
             <td><button @click="save(u)" :disabled="u._saving">{{ u._saving ? '…' : 'Guardar' }}</button></td>
@@ -39,10 +53,11 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { adminListUsers, adminListRoles, adminUpdateUser } from '../api.js';
+import { adminListUsers, adminListRoles, adminUpdateUser, adminSetUserGroups, listGroups } from '../api.js';
 
 const rows = ref([]);
 const roles = ref([]);
+const circles = ref([]);
 const filter = ref('pendiente');
 const busy = ref(false);
 const error = ref('');
@@ -55,11 +70,23 @@ async function loadRoles() {
   } catch (e) { error.value = e.message || String(e); }
 }
 
+async function loadCircles() {
+  try {
+    const r = await listGroups();
+    // Exclude the on-call 'turno' roster — only specialties/circles are assignable here.
+    circles.value = (r?.data || []).filter(g => g.kind !== 'roster');
+  } catch (e) { error.value = e.message || String(e); }
+}
+
 async function loadUsers() {
   busy.value = true; error.value = ''; ok.value = '';
   try {
     const u = await adminListUsers(filter.value);
-    rows.value = (u?.users || []).map(x => ({ ...x, active: !!x.active }));
+    rows.value = (u?.users || []).map(x => ({
+      ...x,
+      active: !!x.active,
+      circles: Array.isArray(x.circle_slugs) ? [...x.circle_slugs] : [],
+    }));
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
@@ -67,10 +94,17 @@ async function loadUsers() {
   }
 }
 
+function toggleCircle(u, slug) {
+  const i = u.circles.indexOf(slug);
+  if (i >= 0) u.circles.splice(i, 1);
+  else u.circles.push(slug);
+}
+
 async function save(u) {
   u._saving = true; error.value = ''; ok.value = '';
   try {
     await adminUpdateUser(u.id, { role_id: u.role_id, active: u.active });
+    await adminSetUserGroups(u.id, u.circles);
     ok.value = `Guardado: ${u.email}`;
   } catch (e) {
     error.value = e.message || String(e);
@@ -79,7 +113,7 @@ async function save(u) {
   }
 }
 
-onMounted(async () => { await loadRoles(); await loadUsers(); });
+onMounted(async () => { await Promise.all([loadRoles(), loadCircles()]); await loadUsers(); });
 </script>
 
 <style scoped>
@@ -99,4 +133,12 @@ button { padding: 5px 12px; background: var(--accent); color: #fff; border: none
 button[disabled] { opacity: .6; cursor: not-allowed; }
 .error { color: #dc2626; font-size: 13px; }
 .ok { color: #16a34a; font-size: 13px; }
+.circles-cell { min-width: 180px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  padding: 3px 9px; border-radius: 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+  background: var(--bg); color: var(--text-muted); border: 1px solid var(--border);
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
