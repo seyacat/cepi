@@ -18,7 +18,7 @@ const RE = {
   newEpisode:    /^\/?\s*nuevo\s+episodio\b\s*(.*)$/i,
   closeEpisode:  /^\/?\s*cerrar\s+episodio\b\s*([0-9]{4}-[0-9]{2}-[0-9]{2})?\s*(.*)$/i,
   diagnostico:   /^\/?\s*diagn[óo]stico\s+([A-Z][0-9]{1,2}(?:\.[0-9]{1,2})?)\s+(.+)$/i,
-  escalar:       /^\/?\s*escalar\s+a\s+([0-9a-f-]{36})\s+(.+)$/i,
+  escalar:       /^\/?\s*escalar\s+a\s+([0-9a-f-]{36})\b\s*(.*)$/i,
   signs:         /^\/?\s*signs?\s+(.+)$/i,
   exportar:      /^\s*\/?\s*exportar\s*(anonimizado)?\s*$/i,
   attachment:    /\[adjunto:\s*([^·]+)·\s*([0-9a-f-]{36})\s*\]/i,
@@ -68,6 +68,12 @@ describe('command regexes', () => {
     const m = `escalar a ${VALID_UUID} sospecha alta`.match(RE.escalar);
     expect(m?.[1]).toBe(VALID_UUID);
     expect(m?.[2]).toBe('sospecha alta');
+  });
+
+  it('matches /escalar a <uuid> sin razón (motivo opcional)', () => {
+    const m = `escalar a ${VALID_UUID} `.match(RE.escalar);
+    expect(m?.[1]).toBe(VALID_UUID);
+    expect((m?.[2] || '').trim()).toBe('');
   });
 
   it('matches signs k=v k=v', () => {

@@ -1258,10 +1258,10 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       }
 
       // ── Stage "/escalar a <user-uuid> <razón>" behind gate ──
-      const escalateMatch = message.trim().match(/^\/?\s*escalar\s+a\s+([0-9a-f-]{36})\s+(.+)$/i);
+      const escalateMatch = message.trim().match(/^\/?\s*escalar\s+a\s+([0-9a-f-]{36})\b\s*(.*)$/i);
       if (escalateMatch && activeEpisodeId) {
         const reviewer = escalateMatch[1];
-        const reason   = escalateMatch[2].trim();
+        const reason   = (escalateMatch[2] || '').trim() || 'Derivado para segunda opinión';
         session.pending_action = {
           summary: `Escalar episodio ${activeEpisodeId} a ${reviewer}`,
           tool: 'entities.request_review',

@@ -73,6 +73,16 @@ export async function adminListRoles() {
   return call('/api/admin/roles', { method: 'GET' });
 }
 
+// ── Telemedicina: destinos de derivación (círculos + sus miembros) ──────────────
+export async function listGroups(kind) {
+  const q = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  return call(`/api/groups${q}`, { method: 'GET' });
+}
+
+export async function listGroupMembers(idOrSlug) {
+  return call(`/api/groups/${encodeURIComponent(idOrSlug)}/members`, { method: 'GET' });
+}
+
 export async function adminUpdateUser(id, patch) {
   return call(`/api/admin/users/${encodeURIComponent(id)}`, {
     method: 'PATCH',
