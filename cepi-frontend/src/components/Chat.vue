@@ -59,6 +59,12 @@
         </div>
       </div>
 
+      <h3 style="margin-top: 16px">Acciones del episodio</h3>
+      <div class="shortcuts shortcuts-actions">
+        <button @click="prefillCommand('derivar a ')" :disabled="busy || !activeEpisode" title="Derivar el episodio a una especialidad — completá el círculo y el motivo">↪️ derivar</button>
+        <button @click="send('cerrar episodio')" :disabled="busy || !activeEpisode" title="Cierra el episodio activo (estado cerrado)">✅ cerrar episodio</button>
+      </div>
+
       <h3 style="margin-top: 16px">Atajos</h3>
       <div class="shortcuts">
         <button @click="send('/help')"        :disabled="busy">/help</button>
@@ -592,6 +598,17 @@ function onSideClick(ev) {
   if (ev.target.closest('button') && window.matchMedia('(max-width: 768px)').matches) {
     sideOpen.value = false;
   }
+}
+
+// Pre-fill the composer with a command that needs the user to complete an
+// argument (e.g. "derivar a " → the doctor types the specialty + reason),
+// then focus the textarea. Closes the sidebar (handled by onSideClick on mobile).
+function prefillCommand(text) {
+  draft.value = text;
+  nextTick(() => {
+    const ta = composerEl.value?.querySelector('textarea');
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  });
 }
 
 function labelFor(role) {
