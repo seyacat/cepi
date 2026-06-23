@@ -73,8 +73,9 @@ async function loadRoles() {
 async function loadCircles() {
   try {
     const r = await listGroups();
-    // Exclude the on-call 'turno' roster — only specialties/circles are assignable here.
-    circles.value = (r?.data || []).filter(g => g.kind !== 'roster');
+    // Exclude the on-call 'turno' roster and the virtual 'all' group — only real
+    // specialties/circles have assignable membership.
+    circles.value = (r?.data || []).filter(g => g.kind !== 'roster' && g.kind !== 'all');
   } catch (e) { error.value = e.message || String(e); }
 }
 

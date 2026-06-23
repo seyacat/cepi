@@ -64,15 +64,16 @@
           <li v-if="!derivarGroups.length" class="derivar-muted">No hay círculos disponibles.</li>
           <li v-for="g in derivarGroups" :key="g.id" class="derivar-group">
             <div class="dg-row">
-              <button type="button" class="dg-pick" @click="pickCircle(g)" :title="'Derivar al círculo ' + g.name">
-                <span class="dg-name">⭕ {{ g.name }}</span>
-                <span class="dg-kind">{{ g.kind }}</span>
+              <button type="button" class="dg-pick" @click="pickCircle(g)" :title="g.kind === 'all' ? 'Derivar a toda la red' : 'Derivar al círculo ' + g.name">
+                <span class="dg-name">{{ g.kind === 'all' ? '🌐' : '⭕' }} {{ g.name }}</span>
+                <span class="dg-kind">{{ g.kind === 'all' ? 'toda la red' : g.kind }}</span>
               </button>
-              <button type="button" class="dg-expand" @click="toggleMembers(g)" title="Ver personas">
+              <button v-if="g.kind !== 'all'" type="button" class="dg-expand" @click="toggleMembers(g)" title="Ver personas">
                 {{ expandedGroup === g.slug ? '▾' : '▸' }} 👤{{ g.member_count }}
               </button>
+              <span v-else class="dg-allcount">👤{{ g.member_count }}</span>
             </div>
-            <ul v-if="expandedGroup === g.slug" class="derivar-members">
+            <ul v-if="g.kind !== 'all' && expandedGroup === g.slug" class="derivar-members">
               <li v-if="!(groupMembers[g.slug] || []).length" class="derivar-muted">(sin miembros)</li>
               <li v-for="m in (groupMembers[g.slug] || [])" :key="m.user_id">
                 <button type="button" class="dm-pick" @click="pickPerson(m)" :title="'Derivar a ' + (m.name || m.email)">
@@ -133,7 +134,10 @@ async function openDerivar() {
   try {
     const r = await listGroups();
     // Exclude the on-call 'turno' roster — that's "enviar caso", not derivar.
-    derivarGroups.value = (r?.data || []).filter(g => g.kind !== 'roster');
+    // Put the virtual "todos" (kind 'all') first for prominence.
+    derivarGroups.value = (r?.data || [])
+      .filter(g => g.kind !== 'roster')
+      .sort((a, b) => (b.kind === 'all' ? 1 : 0) - (a.kind === 'all' ? 1 : 0));
   } catch (e) {
     derivarError.value = e?.message || 'No se pudieron cargar los destinos.';
   } finally {
@@ -298,6 +302,7 @@ defineExpose({ openPatient, newGeneral });
   border-radius: 7px; padding: 0 10px; cursor: pointer; font-size: 0.8rem; white-space: nowrap;
 }
 .dg-expand:hover { border-color: var(--accent); color: var(--accent); }
+.dg-allcount { display: flex; align-items: center; padding: 0 10px; font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
 .derivar-members { list-style: none; margin: 0 0 6px; padding: 0 0 0 14px; }
 .derivar-members li { padding: 2px 0; }
 .dm-pick {
