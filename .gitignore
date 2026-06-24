@@ -47,3 +47,4 @@ backups/
 
 # vite transient config bundles
 *.timestamp-*.mjs
+client_secret*

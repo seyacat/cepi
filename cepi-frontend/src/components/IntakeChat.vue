@@ -2,10 +2,21 @@
   <div class="ichat">
     <div v-if="patientName" class="ihead">
       <span class="ihead-name">👤 {{ patientName }}</span>
-      <div class="ihead-actions">
-        <button type="button" :disabled="busy" @click="openDerivar" title="Derivar el episodio a un círculo o a una persona">↪️ Derivar</button>
-        <button type="button" :disabled="busy" @click="send('cerrar episodio')" title="Cerrar el episodio activo (estado cerrado)">✅ Cerrar</button>
+      <div v-if="sessionsList.length > 1" class="ihead-sessions">
+        <button type="button" class="snav" :disabled="busy || sessionIndex >= sessionsList.length - 1" @click="prevSession" title="Sesión anterior">◀</button>
+        <span class="session-label">{{ sessionLabel }}</span>
+        <button type="button" class="snav" :disabled="busy || sessionIndex <= 0" @click="nextSession" title="Sesión siguiente">▶</button>
+        <button v-if="!isActiveSession && activeSessionIndex !== -1" type="button" class="snav snav-now" @click="backToActive" title="Volver a la sesión actual">↻ Actual</button>
       </div>
+      <div class="ihead-actions">
+        <button type="button" :disabled="busy || !isActiveSession" @click="openDerivar" title="Derivar el episodio a un círculo o a una persona">↪️ Derivar</button>
+        <button type="button" :disabled="busy || !isActiveSession" @click="send('cerrar episodio')" title="Cerrar el episodio activo (estado cerrado)">✅ Cerrar</button>
+      </div>
+    </div>
+
+    <div v-if="patientName && !isActiveSession" class="readonly-banner">
+      <span>👁️ Estás viendo una sesión anterior (solo lectura).</span>
+      <button v-if="activeSessionIndex !== -1" type="button" class="banner-action" @click="backToActive">Volver a la actual</button>
     </div>
 
     <div class="ifeed" ref="feedEl">
@@ -22,8 +33,8 @@
       <div v-if="pending" class="ipending">
         <p class="ipending-summary">{{ pending.summary }}</p>
         <div class="ipending-actions">
-          <button class="ok" :disabled="busy" @click="send('sí')">✓ Confirmar</button>
-          <button class="no" :disabled="busy" @click="send('no')">✗ Cancelar</button>
+          <button class="ok" :disabled="busy || !isActiveSession" @click="send('sí')">✓ Confirmar</button>
+          <button class="no" :disabled="busy || !isActiveSession" @click="send('no')">✗ Cancelar</button>
         </div>
       </div>
 
@@ -35,7 +46,7 @@
       <button type="button" @click="pendingAttachment = null">quitar</button>
     </p>
 
-    <form class="icomposer" @submit.prevent="onSubmit">
+    <form v-if="isActiveSession" class="icomposer" @submit.prevent="onSubmit">
       <label class="iupload" :class="{ disabled: busy || uploading }" title="Adjuntar imagen">
         📎<input type="file" accept="image/*" :disabled="busy || uploading" @change="onFile" />
       </label>
@@ -50,6 +61,10 @@
         {{ uploading ? '…' : 'Enviar' }}
       </button>
     </form>
+    <div v-else class="icomposer-disabled">
+      <span>Sesión anterior — solo lectura.</span>
+      <button v-if="activeSessionIndex !== -1" type="button" @click="backToActive">Volver a la sesión actual</button>
+    </div>
 
     <div v-if="showDerivar" class="derivar-modal" @click.self="showDerivar = false">
       <div class="derivar-panel">
@@ -90,8 +105,8 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue';
-import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers } from '../api.js';
+import { ref, computed, nextTick } from 'vue';
+import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers, listBotSessions, loadBotSession } from '../api.js';
 import MessageContent from './MessageContent.vue';
 
 defineProps({ user: Object });
@@ -108,6 +123,29 @@ const pendingAttachment = ref(null);
 const patientName = ref('');
 const feedEl = ref(null);
 const taEl = ref(null);
+
+// ── One chat per patient: navigate the patient's previous sessions ───────────
+// sessionsList is newest-first (as returned by the backend). sessionIndex points
+// at the session currently shown; the "active" session is the most-recent OPEN
+// one (estado === 'abierta') — the only one you can write to.
+const sessionsList = ref([]);
+const sessionIndex = ref(0);
+const currentPatientId = ref(null);
+
+const activeSessionIndex = computed(() => sessionsList.value.findIndex(s => s.estado === 'abierta'));
+const isActiveSession = computed(() =>
+  sessionsList.value.length === 0 ||
+  (activeSessionIndex.value !== -1 && sessionIndex.value === activeSessionIndex.value)
+);
+// Chronological number: oldest = 1, newest = N (list is newest-first).
+const sessionLabel = computed(() => {
+  const n = sessionsList.value.length;
+  if (n <= 1) return '';
+  const num = n - sessionIndex.value;
+  const s = sessionsList.value[sessionIndex.value];
+  const when = s?.created_at ? new Date(s.created_at).toLocaleDateString('es', { day: '2-digit', month: 'short' }) : '';
+  return `Sesión ${num}/${n}${when ? ' · ' + when : ''}`;
+});
 
 // ── Derivar: picker of circles (user_groups) and their members ────────────────
 const showDerivar    = ref(false);
@@ -175,6 +213,7 @@ async function scrollEnd() {
 
 async function send(message) {
   if (!message || !message.trim() || busy.value) return;
+  if (!isActiveSession.value) return;   // viewing a previous session → read-only
   busy.value = true;
   error.value = '';
   turns.value = [...turns.value, { role: 'user', content: message }];
@@ -198,6 +237,7 @@ function onKey(ev) {
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); onSubmit(); }
 }
 function onSubmit() {
+  if (!isActiveSession.value) return;
   const t = draft.value.trim();
   let payload = t;
   if (pendingAttachment.value) {
@@ -227,14 +267,85 @@ function reset() {
   pending.value = null;
   pendingAttachment.value = null;
   error.value = '';
+  sessionsList.value = [];
+  sessionIndex.value = 0;
+  currentPatientId.value = null;
 }
+
+// Hydrate the session at the given index into the feed. The transcript is shown
+// read-only unless it's the active (newest open) session; localStorage only ever
+// points at the writable session so a refresh restores it, not a past one.
+async function loadSessionInto(idx) {
+  const s = sessionsList.value[idx];
+  if (!s) return;
+  const expectPatient = currentPatientId.value;
+  sessionIndex.value = idx;
+  busy.value = true;
+  error.value = '';
+  try {
+    const r = await loadBotSession(s.id);
+    if (currentPatientId.value !== expectPatient) return;   // patient switched mid-load → drop stale
+    sessionId.value = r.session_id;
+    turns.value = Array.isArray(r.history) ? r.history.filter(t => t.role !== 'system') : [];
+    activePatient.value = r.active_patient_id;
+    pending.value = r.pending_action ?? null;
+    if (isActiveSession.value) saveSessionId(r.session_id);
+  } catch (e) {
+    error.value = 'No se pudo cargar la sesión: ' + (e.message || e);
+  } finally {
+    busy.value = false;
+    await scrollEnd();
+  }
+}
+
+// ◀ older / ▶ newer. List is newest-first, so older = higher index.
+function prevSession() { if (sessionIndex.value < sessionsList.value.length - 1) loadSessionInto(sessionIndex.value + 1); }
+function nextSession() { if (sessionIndex.value > 0) loadSessionInto(sessionIndex.value - 1); }
+function backToActive() { if (activeSessionIndex.value !== -1) loadSessionInto(activeSessionIndex.value); }
+
 // Driven by ChatShell: open a patient (binds the session) or start a general chat.
-function openPatient(uuid, name) {
+// One chat per patient: resume the most-recent OPEN session; only create a new
+// one when the patient has no open session (zero sessions, or all closed).
+async function openPatient(uuid, name) {
   if (!uuid) return;
   reset();
   patientName.value = name || '';
-  send('activar paciente ' + uuid);
+  currentPatientId.value = uuid;
+  let list = [];
+  try {
+    const r = await listBotSessions(uuid);
+    list = (r?.sessions || []).filter(s => !s.active_patient_id || s.active_patient_id === uuid);
+  } catch { /* fall through to create */ }
+  if (currentPatientId.value !== uuid) return;   // patient switched mid-load → drop
+
+  sessionsList.value = list;
+  const openIdx = activeSessionIndex.value;
+  if (openIdx !== -1) {
+    // Resume the existing open consultation (no new session created).
+    await loadSessionInto(openIdx);
+  } else {
+    // No open session (zero sessions, or all closed): start a fresh one.
+    // Clear the list first so send() sees an active (writable) session.
+    sessionsList.value = [];
+    sessionIndex.value = 0;
+    send('activar paciente ' + uuid).then(refreshSessions);
+  }
 }
+
+// Re-read the patient's sessions after creating one, so the nav reflects it.
+async function refreshSessions() {
+  const uuid = currentPatientId.value;
+  if (!uuid) return;
+  try {
+    const r = await listBotSessions(uuid);
+    const list = (r?.sessions || []).filter(s => !s.active_patient_id || s.active_patient_id === uuid);
+    if (currentPatientId.value !== uuid) return;
+    sessionsList.value = list;
+    const openIdx = activeSessionIndex.value;
+    sessionIndex.value = openIdx !== -1 ? openIdx : 0;
+  } catch { /* keep current view */ }
+}
+
 function newGeneral() {
   reset();
   patientName.value = '';
@@ -263,6 +374,47 @@ defineExpose({ openPatient, newGeneral });
 }
 .ihead-actions button:hover:not(:disabled) { background: rgba(255,255,255,.28); }
 .ihead-actions button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Session navigation (one chat per patient, browse previous sessions). */
+.ihead-sessions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ihead-sessions .snav {
+  border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff;
+  border-radius: 14px; padding: 4px 9px; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+  white-space: nowrap; line-height: 1;
+}
+.ihead-sessions .snav:hover:not(:disabled) { background: rgba(255,255,255,.28); }
+.ihead-sessions .snav:disabled { opacity: .35; cursor: not-allowed; }
+.ihead-sessions .snav-now { border-style: dashed; }
+.session-label { font-size: 0.76rem; font-weight: 600; opacity: .95; white-space: nowrap; }
+
+/* Read-only banner shown while viewing a non-active (previous/closed) session. */
+.readonly-banner {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 14px; background: #fef3c7; color: #92400e; border-bottom: 1px solid #fcd34d;
+  font-size: 0.82rem;
+}
+.readonly-banner .banner-action {
+  border: 1px solid #d97706; background: #fff; color: #b45309;
+  border-radius: 14px; padding: 3px 10px; font-size: 0.76rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.readonly-banner .banner-action:hover { background: #fffbeb; }
+
+/* Placeholder shown in place of the composer when the session is read-only. */
+.icomposer-disabled {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 14px 12px; border-top: 1px solid var(--border); background: var(--bg);
+  color: var(--text-muted); font-size: 0.88rem;
+}
+.icomposer-disabled button {
+  border: 1px solid var(--accent); background: #fff; color: var(--accent);
+  border-radius: 20px; padding: 7px 14px; font-weight: 700; font-size: 0.82rem; cursor: pointer;
+}
+.icomposer-disabled button:hover { background: var(--accent); color: #fff; }
+
+@media (max-width: 768px) {
+  .ihead { flex-wrap: wrap; }
+  .ihead-sessions { order: 3; width: 100%; justify-content: center; padding-top: 4px; }
+}
 
 /* Derivar picker modal. */
 .derivar-modal {

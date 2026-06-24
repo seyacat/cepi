@@ -104,8 +104,12 @@ app.get('/api/bot/sessions', async (req: Request, res: Response, next: NextFunct
 
     const rows: any[] = Array.isArray(r.data?.data) ? r.data.data
                        : Array.isArray(r.data) ? r.data : [];
+    // Optional ?patient_id= filter: the frontend uses it to show all the chats
+    // of one patient (single-chat-per-patient with session navigation).
+    const patientId = String(req.query.patient_id || '').trim();
     const items = rows
       .filter(row => !userId || (row?.data?.user_id ?? '') === userId)
+      .filter(row => !patientId || (row?.data?.active_patient_id ?? '') === patientId)
       .map(row => {
         const turnsRaw = row?.data?.turns;
         let preview = '';
@@ -129,6 +133,7 @@ app.get('/api/bot/sessions', async (req: Request, res: Response, next: NextFunct
           created_at: row.created_at,
           updated_at: row.updated_at,
           estado:     row?.data?.estado || 'abierta',
+          active_patient_id: row?.data?.active_patient_id || null,
           preview,
           patient_name: patientName,
         };

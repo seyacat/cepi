@@ -97,6 +97,25 @@ export async function adminSetUserGroups(id, slugs) {
   });
 }
 
+// ── Notificaciones (recordatorios del usuario) ──────────────────────────────
+// Backed by TodoERP /api/reminders. Clinical roles have `reminders:read_own`,
+// so this returns only the caller's own reminders (derivaciones recibidas,
+// recordatorios de próximo control, etc.).
+export async function listReminders(params = {}) {
+  const q = new URLSearchParams();
+  if (params.status) q.set('status', params.status);
+  if (params.entity_id) q.set('entity_id', params.entity_id);
+  const qs = q.toString();
+  return call(`/api/reminders${qs ? '?' + qs : ''}`, { method: 'GET' });
+}
+
+export async function completeReminder(id, result) {
+  return call(`/api/reminders/${encodeURIComponent(id)}/complete`, {
+    method: 'POST',
+    body: JSON.stringify(result ? { result } : {}),
+  });
+}
+
 export function loadSessionId() {
   return localStorage.getItem('cepi.session_id') || null;
 }
@@ -210,8 +229,9 @@ export async function loadBotSession(sessionId) {
   return call(`/api/bot/session/${encodeURIComponent(sessionId)}`, { method: 'GET' });
 }
 
-export async function listBotSessions() {
-  return call('/api/bot/sessions', { method: 'GET' });
+export async function listBotSessions(patientId) {
+  const q = patientId ? `?patient_id=${encodeURIComponent(patientId)}` : '';
+  return call(`/api/bot/sessions${q}`, { method: 'GET' });
 }
 
 /**

@@ -16,6 +16,7 @@
       <div class="header-right">
         <span v-if="user" class="user">
           <span class="user-id">{{ user.email }} · {{ user.role }}</span>
+          <Notifications v-if="!isPending" />
           <button v-if="isAdmin" @click="showAdmin = !showAdmin">{{ showAdmin ? 'Chat' : 'Admin' }}</button>
           <button @click="toggleDark" :title="dark ? 'Modo claro' : 'Modo oscuro'">{{ dark ? '☀' : '☾' }}</button>
           <button @click="onLogout">Salir</button>
@@ -45,6 +46,7 @@ import VerifyEmail from './components/VerifyEmail.vue';
 import AdminUsers from './components/AdminUsers.vue';
 import PendingApproval from './components/PendingApproval.vue';
 import ChatShell from './components/ChatShell.vue';
+import Notifications from './components/Notifications.vue';
 import { whoami, logout } from './api.js';
 import { bindBackState } from './useBackStack.js';
 
