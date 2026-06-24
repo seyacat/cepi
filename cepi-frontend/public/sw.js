@@ -1,6 +1,6 @@
 /* CEPI service worker — offline shell + Web Push (TELEMEDICINA.md §6C).
  * Dependency-free. Bump CACHE to invalidate the shell. */
-const CACHE = 'cepi-shell-v1';
+const CACHE = 'cepi-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
