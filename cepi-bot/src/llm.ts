@@ -13,6 +13,9 @@ export interface ChatTurn {
   content: string;
   /** For role:'tool', the corresponding tool name. */
   tool_name?: string;
+  /** ISO timestamp, stamped at persist time. Lets the patient group thread
+   *  order messages chronologically across sessions (PAPER §11.5). */
+  ts?: string;
 }
 
 export interface ToolSpec {

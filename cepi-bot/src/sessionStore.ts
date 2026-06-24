@@ -66,11 +66,16 @@ export function emptySession(userId: string | null = null): Omit<BotSession, 'id
 /** Convert an in-memory session into the JSONB shape declared by the
  *  bot_session entity_definition (textarea fields hold serialized JSON). */
 function toPersistedShape(s: Omit<BotSession, 'id'>): Record<string, unknown> {
+  // Stamp any turn that lacks a timestamp (non-mutating: maps a copy so the
+  // in-memory turns are untouched). Enables chronological ordering of the
+  // per-patient group thread across sessions.
+  const now = new Date().toISOString();
+  const stampedTurns = (s.turns ?? []).map(t => (t.ts ? t : { ...t, ts: now }));
   return {
     user_id:           s.user_id ?? '',
     active_patient_id: s.active_patient_id ?? '',
     active_episode_id: s.active_episode_id ?? '',
-    turns:             JSON.stringify(s.turns ?? []),
+    turns:             JSON.stringify(stampedTurns),
     extracted_slots:   JSON.stringify(s.extracted_slots ?? {}),
     pending_slots:     JSON.stringify(s.pending_slots ?? []),
     tool_calls:        JSON.stringify(s.tool_calls ?? []),

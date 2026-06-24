@@ -234,6 +234,13 @@ export async function listBotSessions(patientId) {
   return call(`/api/bot/sessions${q}`, { method: 'GET' });
 }
 
+// Merged "group thread" for a patient: all clinicians' messages + the bot,
+// chronological and attributed by author. Backed by TodoERP (cross-user read
+// behind a patient-view gate) since the bot only sees the caller's own sessions.
+export async function getPatientThread(patientId) {
+  return call(`/api/patient-thread?patient_id=${encodeURIComponent(patientId)}`, { method: 'GET' });
+}
+
 /**
  * Fetch the clinical images of an episode plus their AI classifications.
  * Read-only; backed by cepi-bot's /api/bot/episode-images endpoint.
