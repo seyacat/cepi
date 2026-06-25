@@ -285,6 +285,9 @@ async function findMyOpenSession(uuid) {
 }
 
 // Driven by ChatShell: open a patient's group thread (or start a general chat).
+// On open we (re)activate the patient — reusing the caller's open session if any,
+// else creating one — so the bot greets and tells the user what's still pending
+// in the ficha. Then we render the merged group thread.
 async function openPatient(uuid, name) {
   if (!uuid) return;
   reset();
@@ -294,9 +297,12 @@ async function openPatient(uuid, name) {
   try {
     const sid = await findMyOpenSession(uuid);
     if (currentPatientId.value !== uuid) return;            // switched mid-load → drop
-    sessionId.value = sid;
-    if (sid) saveSessionId(sid);
+    const r = await chat('activar paciente ' + uuid, sid); // server-side, no LLM
+    if (currentPatientId.value !== uuid) return;
+    if (r?.session_id) { sessionId.value = r.session_id; saveSessionId(r.session_id); }
     await reloadThread();
+  } catch (e) {
+    if (currentPatientId.value === uuid) error.value = e.message || String(e);
   } finally {
     if (currentPatientId.value === uuid) busy.value = false;
   }

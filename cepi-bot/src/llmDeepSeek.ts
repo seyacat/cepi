@@ -53,12 +53,25 @@ function fromOpenAIToolName(n: string): string {
   return n.replace(/_/, '.');
 }
 
-function toOpenAIMessages(history: ChatTurn[], systemPrompt: string): any[] {
+export function toOpenAIMessages(history: ChatTurn[], systemPrompt: string): any[] {
   const msgs: any[] = [{ role: 'system', content: systemPrompt }];
+  let toolSeq = 0;
   for (const h of history) {
     if (h.role === 'tool') {
-      msgs.push({ role: 'tool', name: (h.tool_name || 'tool').replace(/\./g, '_'),
-                  content: h.content, tool_call_id: 'call_synthetic' });
+      // OpenAI/DeepSeek reject a role:'tool' message unless it directly follows
+      // an assistant message whose tool_calls includes a matching id. Our stored
+      // history never carries that assistant turn (the agent records only the
+      // tool result; server-side commands push bare tool turns), so synthesize
+      // the pair here — otherwise the API 400s with "Messages with role 'tool'
+      // must be a response to a preceding message with 'tool_calls'".
+      const id = `call_synth_${toolSeq++}`;
+      const fnName = (h.tool_name || 'tool').replace(/\./g, '_');
+      msgs.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id, type: 'function', function: { name: fnName, arguments: '{}' } }],
+      });
+      msgs.push({ role: 'tool', tool_call_id: id, content: h.content });
     } else if (h.role === 'system') {
       msgs.push({ role: 'system', content: h.content });
     } else if (h.role === 'user') {

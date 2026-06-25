@@ -614,7 +614,11 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         session.active_episode_id = resumeId
           ? resumeId
           : await openEpisodeFicha(mcp, session, pid);
-        const firstGroup = await firstIncompleteFichaGroup(mcp, session);
+        // Compute ficha completion once and reuse it for both the form and the
+        // greeting, so the bot can tell the user exactly what's still pending.
+        const marks = await fichaBookmarks(mcp, session);
+        const firstGroup = marks.find(m => !m.done)?.id ?? null;
+        const pendingLabels = marks.filter(m => !m.done).map(m => m.label);
         const fichaForm = firstGroup
           ? await fichaGroupFormFilled(firstGroup, mcp, session)
           : null;
@@ -628,9 +632,12 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           active_form: fichaForm,
         };
         const lead = resumeId ? 'Continuamos la consulta en curso.' : 'Abrí una consulta nueva.';
-        const ackText = `${greet}\n\n` + lead + ' ' + (fichaForm
-          ? (resumeId ? 'Seguimos con la ficha clínica:' : 'Empecemos la ficha clínica:')
-          : 'La ficha ya está completa — revisá lo que quieras desde los marcadores.');
+        const fichaLine = pendingLabels.length
+          ? (pendingLabels.length > 6
+              ? `📋 Faltan ${pendingLabels.length} secciones de la ficha. Próximas: ${pendingLabels.slice(0, 3).join(', ')}…`
+              : `📋 Falta completar en la ficha: ${pendingLabels.join(', ')}.`)
+          : '✅ La ficha clínica está completa.';
+        const ackText = `${greet}\n\n${lead}\n${fichaLine}`;
         session.turns = [...session.turns,
           { role: 'user', content: message }, { role: 'assistant', content: ackText }];
         await saveSession(mcp, session);
@@ -640,7 +647,7 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
           active_patient_id: session.active_patient_id,
           active_episode_id: session.active_episode_id,
           form: fichaForm,
-          bookmarks: await fichaBookmarks(mcp, session),
+          bookmarks: marks,
         });
       }
       if (clrPatient) {
