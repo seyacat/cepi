@@ -31,7 +31,7 @@
         v-for="p in filtered"
         :key="p.id"
         class="row"
-        :class="{ active: p.id === activeId }"
+        :class="{ active: p.id === activeId, 'to-review': !!reviewQueue[p.id] }"
         @click="$emit('select', p)"
       >
         <span class="avatar">{{ initials(p) }}</span>
@@ -39,6 +39,11 @@
           <span class="name">{{ fullName(p) }}</span>
           <span class="cc">CC: {{ p.data?.cedula || '—' }}</span>
         </span>
+        <span
+          v-if="reviewQueue[p.id]"
+          class="rev-badge"
+          :title="`${reviewQueue[p.id].pending} pendiente(s) de revisión derivada(s) a vos`"
+        >🔔 revisar</span>
       </button>
     </div>
     <p v-else-if="!busy" class="empty">{{ q ? 'Sin coincidencias' : 'No hay pacientes' }}</p>
@@ -48,7 +53,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { listPatients, createPatient } from '../api.js';
+import { listPatients, createPatient, getReviewQueue } from '../api.js';
 
 defineProps({
   activeId: { type: String, default: null },
@@ -57,6 +62,7 @@ defineProps({
 const emit = defineEmits(['select', 'general']);
 
 const all = ref([]);
+const reviewQueue = ref({});   // { patientId: { pending, earliest_due } } — derived to me
 const q = ref('');
 const busy = ref(false);
 const error = ref('');
@@ -97,12 +103,26 @@ function initials(p) {
 
 const filtered = computed(() => {
   const t = q.value.trim().toLowerCase();
-  if (!t) return all.value;
-  return all.value.filter(p => {
+  let list = all.value;
+  if (t) list = all.value.filter(p => {
     const n = fullName(p).toLowerCase();
     const c = String(p.data?.cedula || '').toLowerCase();
     return n.includes(t) || c.includes(t);
   });
+  // Patients with items pending my review (derived to me) come first, soonest
+  // due first; everyone else keeps their original order.
+  const rq = reviewQueue.value;
+  return list.map((p, i) => ({ p, i })).sort((a, b) => {
+    const ra = rq[a.p.id], rb = rq[b.p.id];
+    if (ra && !rb) return -1;
+    if (!ra && rb) return 1;
+    if (ra && rb) {
+      const da = ra.earliest_due ? new Date(ra.earliest_due).getTime() : Infinity;
+      const db = rb.earliest_due ? new Date(rb.earliest_due).getTime() : Infinity;
+      if (da !== db) return da - db;
+    }
+    return a.i - b.i;
+  }).map(x => x.p);
 });
 
 async function load() {
@@ -111,6 +131,10 @@ async function load() {
   try {
     const r = await listPatients({});
     all.value = Array.isArray(r?.data) ? r.data : [];
+    try {
+      const rq = await getReviewQueue();
+      reviewQueue.value = rq?.by_patient || {};
+    } catch { reviewQueue.value = {}; }
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
@@ -146,6 +170,13 @@ defineExpose({ reload: load });
 }
 .row:hover, .general:hover { background: var(--bg); }
 .row.active, .general.active { background: var(--accent-band, #e8f3f8); }
+.row.to-review { background: #fff7ed; box-shadow: inset 3px 0 0 #f97316; }
+.row.to-review.active { background: var(--accent-band, #e8f3f8); }
+.rev-badge {
+  flex-shrink: 0; margin-left: auto; align-self: center;
+  background: #f97316; color: #fff; border-radius: 12px;
+  padding: 2px 8px; font-size: 0.66rem; font-weight: 800; white-space: nowrap;
+}
 .general { border-bottom: 6px solid var(--bg); }
 .avatar {
   flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%;

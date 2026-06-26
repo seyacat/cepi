@@ -109,6 +109,12 @@ export async function listReminders(params = {}) {
   return call(`/api/reminders${qs ? '?' + qs : ''}`, { method: 'GET' });
 }
 
+// Patients with reminders pending the caller's review (derived to me). Used to
+// surface "to review" patients at the top of the list.
+export async function getReviewQueue() {
+  return call('/api/review-queue', { method: 'GET' });
+}
+
 export async function completeReminder(id, result) {
   return call(`/api/reminders/${encodeURIComponent(id)}/complete`, {
     method: 'POST',
