@@ -509,7 +509,10 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       const setPatient = trimmed.match(/^\/?\s*activar\s+paciente\s+([0-9a-f-]{36})\s*$/i);
       const clrPatient = trimmed.match(/^\/?\s*(salir|cerrar|olvidar)\s+paciente\s*$/i);
       const setEpisode = trimmed.match(/^\/?\s*activar\s+episodio\s+([0-9a-f-]{36})\s*$/i);
-      const clrEpisode = trimmed.match(/^\/?\s*(salir|cerrar|olvidar)\s+episodio\s*$/i);
+      // NB: "cerrar episodio" is NOT an unlink — it CLOSES the episode (estado
+      // cerrado) and is handled (with authorization) by the closeMatch branch
+      // below. Only "salir/olvidar episodio" merely detaches the active pointer.
+      const clrEpisode = trimmed.match(/^\/?\s*(salir|olvidar)\s+episodio\s*$/i);
 
       if (setPatient) {
         const pid = setPatient[1];
@@ -1487,6 +1490,35 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
         const cur = await mcp.call('entities.get', { id: activeEpisodeId });
         const curData = (cur.ok && cur.data?.data) ? { ...cur.data.data } : {};
         delete (curData as any)._relations;
+
+        // Authorization (PAPER §13.6): the responsible doctor — the current
+        // responsable_actual_id, or the treating medico_id when no one has
+        // claimed the case — may close their own episode (ownership). Closing
+        // ANY episode requires the `episode:close` permission (granted to
+        // supermedico; admin via the *:*:*:* wildcard).
+        const meClose = await mcp.call('auth.whoami', {});
+        const meUser: any = meClose.data?.user || {};
+        const callerId = meUser.id || null;
+        const perms: string[] = Array.isArray(meUser.permissions) ? meUser.permissions : [];
+        const respId   = (curData as any).responsable_actual_id || '';
+        const medicoId = (curData as any).medico_id || '';
+        const isResponsible = respId ? callerId === respId : callerId === medicoId;
+        const canCloseAny  = perms.includes('episode:close') || perms.includes('*:*:*:*');
+        if (!isResponsible && !canCloseAny) {
+          const ackText = 'Solo el médico responsable del episodio (o alguien con permiso para cerrar episodios) puede cerrarlo.';
+          session.turns = [
+            ...session.turns,
+            { role: 'user',      content: message },
+            { role: 'assistant', content: ackText },
+          ];
+          await saveSession(mcp, session);
+          return res.json({
+            ok: true, session_id: sessionId, text: ackText,
+            history: session.turns, toolCalls: [],
+            active_patient_id: activePatientId, active_episode_id: activeEpisodeId,
+          });
+        }
+
         const merged: Record<string, unknown> = { ...curData, estado: 'cerrado' };
         if (proxFecha) {
           merged.proximo_control_fecha  = proxFecha;
