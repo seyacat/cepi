@@ -298,6 +298,85 @@ export const FICHA_GROUPS: FichaGroup[] = FICHA_GROUP_SPEC.map(g => ({
   fields: g.keys.map(k => byKey[k].field),
 }));
 
+// ── Coerción de campos select/radio a sus opciones válidas ───────────────────
+// El LLM, al extraer datos de texto libre, produce valores en lenguaje natural
+// ("hombre", "negro") que no coinciden con las opciones del select; la BD los
+// rechaza (CHECK → "Validación fallida"). Normalizamos contra las opciones de la
+// ficha + sinónimos; si no se puede mapear, se descarta el campo (no se fuerza
+// un valor inválido ni se rompe el guardado del resto).
+
+function normVal(s: any): string {
+  return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+const SELECT_OPTIONS: Record<string, string[]> = {};
+const BOOL_FIELDS = new Set<string>();
+for (const d of FICHA_FIELD_DEFS) {
+  const f = d.field;
+  if (f.type !== 'radio' || !f.key || !Array.isArray(f.options) || !f.options.length) continue;
+  if (typeof f.options[0] === 'object') BOOL_FIELDS.add(f.key);      // Sí/No (boolean)
+  else SELECT_OPTIONS[f.key] = f.options as string[];
+}
+
+// Sinónimos (normalizados, sin acentos) → opción canónica, por campo.
+const SYNONYMS: Record<string, Record<string, string>> = {
+  sexo: { m: 'M', masculino: 'M', hombre: 'M', varon: 'M', masc: 'M', male: 'M', h: 'M',
+          f: 'F', femenino: 'F', mujer: 'F', fem: 'F', female: 'F',
+          otro: 'Otro', otra: 'Otro', x: 'Otro', 'no binario': 'Otro', nb: 'Otro', intersex: 'Otro' },
+  etnia: { afro: 'afro', afrodescendiente: 'afro', negro: 'afro', negra: 'afro', moreno: 'afro', morena: 'afro', black: 'afro', afroamericano: 'afro', afroamericana: 'afro',
+           blanco: 'blanco', blanca: 'blanco', caucasico: 'blanco', caucasica: 'blanco', white: 'blanco',
+           mestizo: 'mestiza', mestiza: 'mestiza',
+           otra: 'otra', otro: 'otra', indigena: 'otra', montubio: 'otra', montubia: 'otra', asiatico: 'otra', asiatica: 'otra', oriental: 'otra' },
+  escolaridad_grado: { ninguna: 'ninguna', ninguno: 'ninguna', analfabeto: 'ninguna', 'sin estudios': 'ninguna', 'sin instruccion': 'ninguna',
+                       basico: 'básico', basica: 'básico', primaria: 'básico', secundaria: 'básico', escuela: 'básico', colegio: 'básico', bachiller: 'básico', bachillerato: 'básico',
+                       superior: 'superior',
+                       'tercer nivel': 'tercer nivel', universitario: 'tercer nivel', universitaria: 'tercer nivel', universidad: 'tercer nivel', licenciatura: 'tercer nivel', grado: 'tercer nivel',
+                       'cuarto nivel': 'cuarto nivel', postgrado: 'cuarto nivel', posgrado: 'cuarto nivel', maestria: 'cuarto nivel', master: 'cuarto nivel', doctorado: 'cuarto nivel', phd: 'cuarto nivel' },
+  condicion_socioeconomica: { alto: 'alto', alta: 'alto', medio: 'medio', media: 'medio', bajo: 'bajo', baja: 'bajo' },
+  picor: { leve: 'leve', moderado: 'moderado', moderada: 'moderado', severo: 'severo', severa: 'severo', grave: 'severo', intenso: 'severo' },
+  dolor: { leve: 'leve', moderado: 'moderado', moderada: 'moderado', severo: 'severo', severa: 'severo', grave: 'severo', intenso: 'severo' },
+  curso: { progresivo: 'progresivo', regresivo: 'regresivo', continuo: 'continuo', constante: 'continuo', intermitente: 'intermitente', fluctuante: 'intermitente' },
+};
+
+/** Normaliza el valor de un campo select/radio a su opción válida, o `undefined`
+ *  si no se puede mapear (para descartarlo en vez de fallar el guardado). */
+export function coerceFichaValue(key: string, value: any): any {
+  if (BOOL_FIELDS.has(key)) {
+    if (value === true || value === false) return value;
+    const n = normVal(value);
+    if (['si', 'sí', 'true', '1', 'y', 'yes'].includes(n)) return true;
+    if (['no', 'false', '0', 'n'].includes(n)) return false;
+    return undefined;
+  }
+  const opts = SELECT_OPTIONS[key];
+  if (!opts) return value;                                  // no es select → tal cual
+  const n = normVal(value);
+  if (!n) return undefined;
+  const exact = opts.find(o => normVal(o) === n);
+  if (exact) return exact;
+  const syn = SYNONYMS[key]?.[n];
+  if (syn) return syn;
+  const partial = opts.find(o => { const no = normVal(o); return no === n || no.startsWith(n) || n.startsWith(no); });
+  if (partial) return partial;
+  return undefined;                                         // no mapeable → descartar
+}
+
+/** Coerciona los campos select/radio de un patch a sus opciones válidas; los que
+ *  no mapean se omiten (evita "Validación fallida" sin perder los demás campos). */
+export function coercePatch(data: Record<string, any>): Record<string, any> {
+  if (!data || typeof data !== 'object') return data;
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (SELECT_OPTIONS[k] || BOOL_FIELDS.has(k)) {
+      const c = coerceFichaValue(k, v);
+      if (c !== undefined) out[k] = c;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export const FICHA_FIRST_GROUP = FICHA_GROUPS[0].id;
 
 /** The atomic BotForm for one ficha group (one form per bookmark). */

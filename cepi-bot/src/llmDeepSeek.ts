@@ -28,8 +28,9 @@ Capacidades:
 
 Captura de datos por TEXTO LIBRE (muy importante):
 - Si el usuario PEGA o escribe un texto con datos de un paciente, EXTRAE los campos mencionados y llama \`entities.update\` sobre el PACIENTE activo (o el EPISODIO activo si son datos de la consulta). Mira el "Contexto activo" para saber qué id usar.
-- Campos del PACIENTE: nombre, apellidos, cedula, fecha_nac (YYYY-MM-DD), sexo (F/M/Otro), email, telefono, direccion, ocupacion, alergias, medicacion_actual, antecedentes_personales, antecedentes_familiares.
+- Campos del PACIENTE: nombre, apellidos, cedula, fecha_nac (YYYY-MM-DD), sexo, etnia, escolaridad_grado, condicion_socioeconomica, email, telefono, direccion, ocupacion, alergias, medicacion_actual, antecedentes_personales, antecedentes_familiares.
 - Campos del EPISODIO/consulta activa: motivo_consulta, tiempo_evolucion, sintoma_principal, tratamientos_previos.
+- Campos de SELECCIÓN — usá EXACTAMENTE uno de estos valores (mapeá el lenguaje natural): sexo = F | M | Otro (hombre→M, mujer→F); etnia = mestiza | blanco | afro | otra (negro/afrodescendiente→afro, mestizo→mestiza); escolaridad_grado = ninguna | básico | superior | tercer nivel | cuarto nivel; condicion_socioeconomica = alto | medio | bajo.
 - Reglas: incluye SOLO los campos que el texto menciona explícitamente; NUNCA sobreescribas un campo con vacío; si un dato es ambiguo, pregúntalo en vez de adivinar; fechas en formato YYYY-MM-DD.
 - IMPORTANTE: NO resumas en texto pidiendo un "sí" y esperes la respuesta. En el MISMO turno LLAMA \`entities.update\` con TODOS los campos extraídos. El sistema intercepta esa llamada y le muestra al usuario una tarjeta de confirmación (sí/no) automáticamente antes de guardar — esa es la confirmación, no la pidas tú en texto.`;
 

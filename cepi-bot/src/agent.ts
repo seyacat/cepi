@@ -15,6 +15,7 @@
 import { TodoErpMcpClient, ToolCallResult } from './mcpClient.js';
 import { LLMAdapter, ChatTurn, ToolSpec, getLLMAdapter } from './llm.js';
 import { redactPiiInJson } from './redact.js';
+import { coercePatch } from './flowV1.js';
 
 const MAX_TOOL_CALLS_PER_TURN = 5;
 
@@ -85,8 +86,16 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutp
         return { text, toolCalls, history };
       }
 
-      const result = await mcp.call(toolName, args);
-      toolCalls.push({ name: toolName, args, result });
+      // Coerce select/radio field values to their valid options before saving,
+      // so free-text-inferred values ("hombre", "negro") map to the option the
+      // DB accepts (sexo=M, etnia=afro) instead of failing "Validación fallida".
+      let callArgs = args;
+      if ((toolName === 'entities.update' || toolName === 'entities.create')
+          && args && typeof (args as any).data === 'object' && (args as any).data) {
+        callArgs = { ...(args as any), data: coercePatch((args as any).data) };
+      }
+      const result = await mcp.call(toolName, callArgs);
+      toolCalls.push({ name: toolName, args: callArgs, result });
       const rawJson = JSON.stringify(result.ok ? result.data : { error: result.error });
       history = [
         ...history,
