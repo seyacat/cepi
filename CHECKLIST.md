@@ -24,6 +24,9 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ Ocultar "Consulta general" (scope innecesario) — deploy
 
 ## Reglas / backend
+- ✅ Al derivar/escalar, se completa el recordatorio propio → la campana "revisar" del que reenvía se limpia — deploy
+- ✅ Título de la barra: "Telemedicina" (antes "Asistente clínico") — deploy
+
 - ✅ Cerrar episodio: solo el médico responsable o permiso `episode:close` (supermédico) / admin — deploy
 - ✅ Campos select (sexo/etnia/etc.): coerción de texto libre a opción válida ("hombre negro" → M/afro) — deploy
 - ✅ Bug DeepSeek 400 (role 'tool' sin tool_calls) corregido — deploy

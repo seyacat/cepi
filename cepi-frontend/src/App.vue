@@ -11,7 +11,7 @@
         />
       </div>
       <div class="header-center">
-        <strong class="brand">Asistente clínico</strong>
+        <strong class="brand">Telemedicina</strong>
       </div>
       <div class="header-right">
         <span v-if="user" class="user">
