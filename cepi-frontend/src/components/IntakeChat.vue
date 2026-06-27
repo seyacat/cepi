@@ -98,6 +98,7 @@ import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers, li
 import MessageContent from './MessageContent.vue';
 
 defineProps({ user: Object });
+const emit = defineEmits(['closed']);
 
 const draft = ref('');
 const busy = ref(false);
@@ -179,17 +180,27 @@ async function toggleMembers(g) {
 
 // Elegir un destino EJECUTA la derivación (antes solo la pre-escribía en el
 // input). Círculo → "derivar a <slug> [motivo]". Persona → "escalar a <uuid> [motivo]".
-function pickCircle(g) {
+async function pickCircle(g) {
   const motivo = derivarMotivo.value.trim();
   showDerivar.value = false;
   derivarMotivo.value = '';
-  send(`derivar a ${g.slug}${motivo ? ' ' + motivo : ''}`);
+  await send(`derivar a ${g.slug}${motivo ? ' ' + motivo : ''}`);
+  if (!error.value) closeChat();           // derivado → cerrar el chat para elegir otro
 }
-function pickPerson(m) {
+async function pickPerson(m) {
   const motivo = derivarMotivo.value.trim();
   showDerivar.value = false;
   derivarMotivo.value = '';
-  send(`escalar a ${m.user_id}${motivo ? ' ' + motivo : ''}`);
+  await send(`escalar a ${m.user_id}${motivo ? ' ' + motivo : ''}`);
+  if (!error.value) closeChat();
+}
+
+// Cierra el chat localmente (sin tocar el servidor) y avisa a ChatShell para
+// deseleccionar el paciente — tras derivar, el médico pasa al siguiente.
+function closeChat() {
+  reset();
+  patientName.value = '';
+  emit('closed');
 }
 
 async function scrollEnd() {

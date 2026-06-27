@@ -11,7 +11,7 @@
       <div v-if="isMobile && view === 'chat'" class="mchat-bar">
         <button class="mback" aria-label="Volver a la lista" @click="view = 'list'">← Pacientes</button>
       </div>
-      <IntakeChat ref="chatRef" :user="user" class="shell-chat" />
+      <IntakeChat ref="chatRef" :user="user" class="shell-chat" @closed="onChatClosed" />
     </div>
   </div>
 </template>
@@ -52,6 +52,15 @@ function onGeneral() {
   generalActive.value = true;
   chatRef.value?.newGeneral();
   if (isMobile.value) view.value = 'chat';
+}
+
+// IntakeChat avisa que se cerró (p.ej. tras derivar) → deseleccionar el paciente
+// y, en móvil, volver a la lista para elegir otro.
+function onChatClosed() {
+  selectedId.value = null;
+  selectedName.value = '';
+  generalActive.value = false;
+  if (isMobile.value) view.value = 'list';
 }
 
 // Device/browser Back: while in the mobile chat view, go back to the list
