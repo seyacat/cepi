@@ -524,15 +524,17 @@ defineExpose({ openPatient, newGeneral });
   background: #fff; color: var(--text); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 4px 0;
 }
-.sections-cat { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 6px 12px 2px; }
-.sections-item {
-  width: 100%; text-align: left; border: 0; background: transparent; color: var(--text);
-  padding: 7px 12px; font-size: 0.84rem; cursor: pointer; display: flex; gap: 8px; align-items: center;
+.sections-panel .sections-cat { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 6px 12px 2px; }
+/* qualified with .sections-panel to override .ihead-actions button (white text). */
+.sections-panel .sections-item {
+  width: 100%; text-align: left; border: 0; border-radius: 0; background: transparent;
+  color: var(--text); white-space: normal;
+  padding: 7px 12px; font-size: 0.84rem; font-weight: 500; cursor: pointer; display: flex; gap: 8px; align-items: center;
 }
-.sections-item:hover:not(:disabled) { background: var(--bg); }
-.sections-item.done { color: var(--text-muted); }
-.sections-item .sec-check { color: #16a34a; font-weight: 800; width: 12px; }
-.sections-item:not(.done) .sec-check { color: var(--text-muted); }
+.sections-panel .sections-item:hover:not(:disabled) { background: var(--bg); }
+.sections-panel .sections-item.done { color: var(--text-muted); }
+.sections-panel .sections-item .sec-check { color: #16a34a; font-weight: 800; width: 12px; flex-shrink: 0; }
+.sections-panel .sections-item:not(.done) .sec-check { color: var(--text-muted); }
 
 /* Form inline de una sección de la ficha. */
 .iform { position: relative; align-self: stretch; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
