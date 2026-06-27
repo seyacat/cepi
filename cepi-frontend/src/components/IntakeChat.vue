@@ -17,23 +17,31 @@
         </div>
         <button type="button" :disabled="busy || !currentPatientId" @click="openFicha" title="Ver la ficha clínica completa">👁️ Ficha</button>
         <button type="button" :disabled="busy" @click="openDerivar" title="Derivar el episodio a un círculo o a una persona">↪️ Derivar</button>
-        <button type="button" :disabled="busy" @click="nuevaConsulta" title="Abrir una consulta nueva (el episodio anterior queda en el hilo)">＋ Nueva consulta</button>
+        <button type="button" :disabled="busy" @click="nuevaConsulta" title="Abrir una consulta nueva (el episodio anterior queda en el historial)">＋ Nueva consulta</button>
       </div>
     </div>
 
+    <div v-if="patientName && episodeOrder.length > 1" class="iepisodes">
+      <button type="button" class="enav" :disabled="busy || episodeIndex <= 0" @click="prevEpisode" title="Consulta anterior">‹</button>
+      <span class="ep-label">{{ episodeLabel }}</span>
+      <button type="button" class="enav" :disabled="busy || episodeIndex >= episodeOrder.length - 1" @click="nextEpisode" title="Consulta siguiente">›</button>
+      <button v-if="!isActiveEpisode" type="button" class="enav enav-now" @click="backToActiveEpisode">↻ actual</button>
+    </div>
+    <div v-if="patientName && !isActiveEpisode" class="ireadonly">👁️ Consulta anterior (solo lectura)</div>
+
     <div class="ifeed" ref="feedEl">
-      <div v-if="!messages.length && !busy" class="iwelcome">
-        <p>Escribí o <b>pegá un texto</b> con los datos del paciente y la IA los carga en la ficha.
-           También podés chatear normalmente; antes de guardar te pido confirmación.</p>
+      <div v-if="!visibleMessages.length && !busy" class="iwelcome">
+        <p>Escribe o <b>pega un texto</b> con los datos del paciente y la IA los carga en la ficha.
+           También puedes conversar normalmente; antes de guardar se pide confirmación.</p>
       </div>
 
-      <div v-for="(m, i) in messages" :key="i" :class="['iturn', m.self ? 'user' : (m.is_bot ? 'assistant' : 'other')]">
+      <div v-for="(m, i) in visibleMessages" :key="i" :class="['iturn', m.self ? 'user' : (m.is_bot ? 'assistant' : 'other')]">
         <span v-if="senderLabel(i)" class="iturn-sender">{{ senderLabel(i) }}</span>
         <MessageContent :content="m.content" />
       </div>
       <div v-if="busy" class="iturn assistant"><span class="thinking">escribiendo…</span></div>
 
-      <div v-if="botForm && !busy" class="iform">
+      <div v-if="botForm && !busy && isActiveEpisode" class="iform">
         <button type="button" class="iform-close" @click="closeForm" title="Cerrar sección">✕</button>
         <BotForm :key="botForm.id" :form="botForm" :busy="busy" @send="send" @submit="onFormSubmit" />
       </div>
@@ -54,7 +62,7 @@
       <button type="button" @click="pendingAttachment = null">quitar</button>
     </p>
 
-    <form class="icomposer" @submit.prevent="onSubmit">
+    <form v-if="isActiveEpisode" class="icomposer" @submit.prevent="onSubmit">
       <label class="iupload" :class="{ disabled: busy || uploading }" title="Adjuntar imagen">
         📎<input type="file" accept="image/*" :disabled="busy || uploading" @change="onFile" />
       </label>
@@ -62,13 +70,17 @@
         ref="taEl"
         v-model="draft"
         rows="1"
-        placeholder="Escribí o pegá un texto largo…"
+        placeholder="Escribe o pega un texto largo…"
         @keydown="onKey"
       ></textarea>
       <button type="submit" :disabled="busy || (!draft.trim() && !pendingAttachment)">
         {{ uploading ? '…' : 'Enviar' }}
       </button>
     </form>
+    <div v-else class="icomposer-ro">
+      <span>Consulta anterior — solo lectura.</span>
+      <button type="button" @click="backToActiveEpisode">Volver a la consulta actual</button>
+    </div>
 
     <div v-if="showDerivar" class="derivar-modal" @click.self="showDerivar = false">
       <div class="derivar-panel">
@@ -182,12 +194,54 @@ const fichaPagerLabel = computed(() => {
 const messages = ref([]);
 const currentPatientId = ref(null);
 
+// ── Navegación por episodios (consultas) ────────────────────────────────────
+// El hilo se muestra por episodio (un episodio por "página"); las flechas ‹ ›
+// navegan los episodios del paciente. Cada turno trae su episode_id (sellado por
+// el bot), así que agrupamos con precisión aun si una sesión abarcó varios.
+const currentEpisodeId = ref(undefined);
+const episodeOrder = computed(() => {       // episode_ids distintos, cronológico (viejo→nuevo)
+  const seen = new Set(); const out = [];
+  for (const m of messages.value) {
+    const e = m.episode_id || null;
+    if (!seen.has(e)) { seen.add(e); out.push(e); }
+  }
+  return out;
+});
+const episodeIndex = computed(() => {
+  const i = episodeOrder.value.indexOf(currentEpisodeId.value);
+  return i >= 0 ? i : episodeOrder.value.length - 1;   // por defecto, el más nuevo
+});
+const visibleMessages = computed(() => {
+  const ord = episodeOrder.value;
+  if (ord.length <= 1) return messages.value;
+  const cur = ord[episodeIndex.value];
+  return messages.value.filter(m => (m.episode_id || null) === cur);
+});
+const isActiveEpisode = computed(() => {
+  const ord = episodeOrder.value;
+  if (ord.length <= 1) return true;
+  const active = activeEpisodeId.value || ord[ord.length - 1];
+  return ord[episodeIndex.value] === active;
+});
+const episodeLabel = computed(() => {
+  const ord = episodeOrder.value;
+  if (ord.length <= 1) return '';
+  const cur = ord[episodeIndex.value];
+  const first = messages.value.find(m => (m.episode_id || null) === cur);
+  const when = first?.ts ? new Date(first.ts).toLocaleDateString('es', { day: '2-digit', month: 'short' }) : '';
+  return `Consulta ${episodeIndex.value + 1}/${ord.length}${when ? ' · ' + when : ''}`;
+});
+function prevEpisode() { const i = episodeIndex.value; if (i > 0) { currentEpisodeId.value = episodeOrder.value[i - 1]; scrollEnd(); } }
+function nextEpisode() { const i = episodeIndex.value; if (i < episodeOrder.value.length - 1) { currentEpisodeId.value = episodeOrder.value[i + 1]; scrollEnd(); } }
+function backToActiveEpisode() { currentEpisodeId.value = activeEpisodeId.value; scrollEnd(); }
+
 // Sender label above a left-side message, shown once per run of consecutive
 // messages from the same author (like a WhatsApp group). '' = no label.
 function senderLabel(i) {
-  const m = messages.value[i];
+  const list = visibleMessages.value;
+  const m = list[i];
   if (!m || m.self) return '';
-  const prev = messages.value[i - 1];
+  const prev = list[i - 1];
   if (prev && !prev.self && prev.author_id === m.author_id) return '';
   return m.is_bot ? '🤖 Asistente' : (m.author_name || 'Profesional');
 }
@@ -316,7 +370,10 @@ function captureFicha(r) {
   if (!r) return;
   if ('form' in r) botForm.value = r.form || null;
   if (Array.isArray(r.bookmarks)) bookmarks.value = r.bookmarks;
-  if ('active_episode_id' in r) activeEpisodeId.value = r.active_episode_id || null;
+  if ('active_episode_id' in r) {
+    activeEpisodeId.value = r.active_episode_id || null;
+    currentEpisodeId.value = activeEpisodeId.value;   // abrir/enviar/nueva consulta → ver el episodio activo
+  }
 }
 function onFormSubmit(payload) { send('', { formSubmission: payload }); }
 function openBookmark(bm) {
@@ -425,6 +482,7 @@ function reset() {
   botForm.value = null;
   bookmarks.value = [];
   activeEpisodeId.value = null;
+  currentEpisodeId.value = undefined;
   showSections.value = false;
 }
 
@@ -507,7 +565,35 @@ defineExpose({ openPatient, newGeneral });
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
 .ihead-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ihead-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.ihead-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Barra de navegación de episodios (consultas). */
+.iepisodes {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 5px 10px; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.iepisodes .enav {
+  border: 1px solid var(--border); background: #fff; color: var(--text);
+  border-radius: 14px; padding: 2px 10px; font-size: 0.8rem; font-weight: 700; cursor: pointer; line-height: 1.4;
+}
+.iepisodes .enav:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.iepisodes .enav:disabled { opacity: .35; cursor: not-allowed; }
+.iepisodes .enav-now { border-style: dashed; }
+.ep-label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.ireadonly {
+  flex-shrink: 0; text-align: center; padding: 5px 10px; font-size: 0.8rem;
+  background: #fef3c7; color: #92400e; border-bottom: 1px solid #fcd34d;
+}
+.icomposer-ro {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 12px; border-top: 1px solid var(--border); background: var(--bg);
+  color: var(--text-muted); font-size: 0.86rem;
+}
+.icomposer-ro button {
+  border: 1px solid var(--accent); background: #fff; color: var(--accent);
+  border-radius: 18px; padding: 6px 12px; font-weight: 700; font-size: 0.8rem; cursor: pointer;
+}
+.icomposer-ro button:hover { background: var(--accent); color: #fff; }
 .ihead-actions button {
   border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff;
   border-radius: 14px; padding: 4px 10px; font-size: 0.78rem; font-weight: 600; cursor: pointer;

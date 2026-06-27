@@ -16,6 +16,9 @@ export interface ChatTurn {
   /** ISO timestamp, stamped at persist time. Lets the patient group thread
    *  order messages chronologically across sessions (PAPER §11.5). */
   ts?: string;
+  /** Active episode at persist time. Lets the UI group the thread per episode
+   *  (navegación con flechas) aun si una sesión abarca varios episodios. */
+  episode_id?: string | null;
 }
 
 export interface ToolSpec {
