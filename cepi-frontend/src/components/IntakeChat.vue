@@ -3,8 +3,21 @@
     <div v-if="patientName" class="ihead">
       <span class="ihead-name">👤 {{ patientName }}</span>
       <div class="ihead-actions">
+        <div class="ihead-sections">
+          <button type="button" :disabled="busy || !bookmarks.length" @click="showSections = !showSections" title="Secciones de la ficha">▤ Secciones ▾</button>
+          <div v-if="showSections && bookmarks.length" class="sections-panel" @click.self="showSections = false">
+            <template v-for="(grp, gi) in bookmarkGroups" :key="'sg' + gi">
+              <div v-if="grp.category" class="sections-cat">{{ grp.category }}</div>
+              <button
+                v-for="bm in grp.items" :key="bm.id" type="button" class="sections-item"
+                :class="{ done: bm.done }" :disabled="busy" @click="openBookmark(bm)"
+              ><span class="sec-check">{{ bm.done ? '✓' : '○' }}</span> {{ bm.label }}</button>
+            </template>
+          </div>
+        </div>
+        <button type="button" :disabled="busy || !currentPatientId" @click="openFicha" title="Ver la ficha clínica completa">👁️ Ficha</button>
         <button type="button" :disabled="busy" @click="openDerivar" title="Derivar el episodio a un círculo o a una persona">↪️ Derivar</button>
-        <button type="button" :disabled="busy" @click="send('cerrar episodio')" title="Cerrar el episodio activo (estado cerrado)">✅ Cerrar</button>
+        <button type="button" :disabled="busy" @click="nuevaConsulta" title="Abrir una consulta nueva (el episodio anterior queda en el hilo)">＋ Nueva consulta</button>
       </div>
     </div>
 
@@ -19,6 +32,11 @@
         <MessageContent :content="m.content" />
       </div>
       <div v-if="busy" class="iturn assistant"><span class="thinking">escribiendo…</span></div>
+
+      <div v-if="botForm && !busy" class="iform">
+        <button type="button" class="iform-close" @click="closeForm" title="Cerrar sección">✕</button>
+        <BotForm :key="botForm.id" :form="botForm" :busy="busy" @send="send" @submit="onFormSubmit" />
+      </div>
 
       <div v-if="pending" class="ipending">
         <p class="ipending-summary">{{ pending.summary }}</p>
@@ -89,13 +107,32 @@
         </ul>
       </div>
     </div>
+
+    <div v-if="showFicha" class="ficha-modal" @click.self="showFicha = false">
+      <div class="ficha-panel">
+        <div class="ficha-head">
+          <strong>Ficha clínica — {{ patientName || 'Paciente' }}</strong>
+          <div class="ficha-head-actions">
+            <button type="button" @click="printFicha">Imprimir</button>
+            <button type="button" @click="showFicha = false">Cerrar</button>
+          </div>
+        </div>
+        <div v-if="fichaEpisodes.length > 1" class="ficha-pager">
+          <button type="button" :disabled="fichaIndex >= fichaEpisodes.length - 1" @click="fichaStep(1)">‹ Anterior</button>
+          <span class="fp-label">{{ fichaPagerLabel }}</span>
+          <button type="button" :disabled="fichaIndex <= 0" @click="fichaStep(-1)">Siguiente ›</button>
+        </div>
+        <iframe :key="fichaIndex" ref="fichaFrame" class="ficha-frame" src="/ficha.html" @load="onFichaLoad"></iframe>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers, listBotSessions, getPatientThread } from '../api.js';
 import MessageContent from './MessageContent.vue';
+import BotForm from './BotForm.vue';
 
 defineProps({ user: Object });
 const emit = defineEmits(['closed']);
@@ -110,6 +147,32 @@ const pendingAttachment = ref(null);
 const patientName = ref('');
 const feedEl = ref(null);
 const taEl = ref(null);
+
+// ── Ficha: secciones (bookmarks) + form inline + visor ──────────────────────
+const botForm = ref(null);               // form de la sección abierta (BotForm) o null
+const bookmarks = ref([]);               // [{id,label,category,done}] de la ficha
+const activeEpisodeId = ref(null);
+const showSections = ref(false);         // dropdown de secciones
+const showFicha = ref(false);            // modal del visor de ficha
+const fichaEpisodes = ref([]);
+const fichaIndex = ref(0);
+const fichaFrame = ref(null);
+
+// Secciones agrupadas por categoría para el dropdown.
+const bookmarkGroups = computed(() => {
+  const out = []; let cur = null;
+  for (const bm of bookmarks.value) {
+    if (!cur || cur.category !== bm.category) { cur = { category: bm.category, items: [] }; out.push(cur); }
+    cur.items.push(bm);
+  }
+  return out;
+});
+const fichaPagerLabel = computed(() => {
+  const total = fichaEpisodes.value.length;
+  if (!total) return '';
+  const ep = fichaEpisodes.value[fichaIndex.value]?.data || {};
+  return `${ep.fecha || 's/f'} · episodio ${total - fichaIndex.value} de ${total}`;
+});
 
 // ── One group thread per patient (WhatsApp-style) ───────────────────────────
 // `messages` is the merged, chronological, attributed feed of every clinician's
@@ -209,14 +272,18 @@ async function scrollEnd() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
-async function send(message) {
-  if (!message || !message.trim() || busy.value) return;
+async function send(message, extra = {}) {
+  const fs = extra.formSubmission || null;
+  if ((!message || !message.trim()) && !fs) return;
+  if (busy.value) return;
   const uuid = currentPatientId.value;
   busy.value = true;
   error.value = '';
-  // Optimistic echo of my own message; reloadThread() reconciles it afterwards.
-  messages.value = [...messages.value, { role: 'user', content: message, self: true, is_bot: false }];
-  await scrollEnd();
+  // Optimistic echo of my own text (not for form submissions); reloadThread() reconciles it.
+  if (message && message.trim()) {
+    messages.value = [...messages.value, { role: 'user', content: message, self: true, is_bot: false }];
+    await scrollEnd();
+  }
   try {
     // Lazily create + bind my session on the first message (avoids spawning a
     // session just by browsing a patient).
@@ -225,10 +292,11 @@ async function send(message) {
       if (currentPatientId.value !== uuid) return;
       if (a?.session_id) { sessionId.value = a.session_id; saveSessionId(a.session_id); }
     }
-    const r = await chat(message, sessionId.value);
+    const r = await chat(message, sessionId.value, extra);
     if (currentPatientId.value !== uuid) return;            // patient switched → drop stale
     if (r?.session_id) { sessionId.value = r.session_id; saveSessionId(r.session_id); }
     if (typeof r?.pending_action !== 'undefined') pending.value = r.pending_action;
+    captureFicha(r);                                        // form / bookmarks / episodio
     await reloadThread();
   } catch (e) {
     // The send failed: drop the optimistic echo by re-syncing with the server,
@@ -242,6 +310,84 @@ async function send(message) {
     await scrollEnd();
   }
 }
+
+// ── Ficha: secciones (dropdown), form inline y visor ────────────────────────
+function captureFicha(r) {
+  if (!r) return;
+  if ('form' in r) botForm.value = r.form || null;
+  if (Array.isArray(r.bookmarks)) bookmarks.value = r.bookmarks;
+  if ('active_episode_id' in r) activeEpisodeId.value = r.active_episode_id || null;
+}
+function onFormSubmit(payload) { send('', { formSubmission: payload }); }
+function openBookmark(bm) {
+  if (busy.value) return;
+  showSections.value = false;
+  send('', { formSubmission: { form_id: 'ficha_goto', data: { group: bm.id } } });
+}
+function closeForm() { botForm.value = null; }
+
+async function fetchEntity(id) {
+  try {
+    const res = await fetch(`/api/entities/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${localStorage.getItem('cepi.jwt') || ''}` } });
+    if (!res.ok) return null;
+    return (await res.json())?.data || null;
+  } catch { return null; }
+}
+async function fetchEpisodes(patientId) {
+  try {
+    const params = new URLSearchParams({ type: 'business', entity_id: '12000000-0000-0000-0000-000000000000', 'filter[patient_id]': patientId, limit: '100' });
+    const res = await fetch(`/api/entities?${params}`, { headers: { Authorization: `Bearer ${localStorage.getItem('cepi.jwt') || ''}` } });
+    if (!res.ok) return [];
+    const body = await res.json();
+    const rows = Array.isArray(body?.data) ? body.data : [];
+    rows.sort((a, b) => String(b?.data?.fecha || '').localeCompare(String(a?.data?.fecha || '')));
+    return rows;
+  } catch { return []; }
+}
+async function openFicha() {
+  if (!currentPatientId.value) return;
+  fichaEpisodes.value = []; fichaIndex.value = 0;
+  const eps = await fetchEpisodes(currentPatientId.value);
+  fichaEpisodes.value = eps;
+  const i = eps.findIndex(e => e.id === activeEpisodeId.value);
+  fichaIndex.value = i >= 0 ? i : 0;
+  showFicha.value = true;
+}
+function fichaStep(dir) {
+  const n = fichaIndex.value + dir;
+  if (n >= 0 && n < fichaEpisodes.value.length) fichaIndex.value = n;
+}
+async function onFichaLoad() {
+  const frame = fichaFrame.value;
+  if (!frame?.contentWindow?.fillFicha) return;
+  let pdata = {};
+  if (currentPatientId.value) { const p = await fetchEntity(currentPatientId.value); pdata = p?.data || {}; }
+  const edata = fichaEpisodes.value[fichaIndex.value]?.data || {};
+  const data = { ...pdata, ...edata };
+  data.nombre = [pdata.nombre, pdata.apellidos].filter(Boolean).join(' ') || data.nombre;
+  if (!data.edad && pdata.fecha_nac) {
+    const d = new Date(pdata.fecha_nac);
+    if (!isNaN(d.getTime())) {
+      const now = new Date(); let a = now.getFullYear() - d.getFullYear();
+      const m = now.getMonth() - d.getMonth(); if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+      if (a >= 0 && a < 150) data.edad = a;
+    }
+  }
+  try { frame.contentWindow.fillFicha(data); } catch { /* ficha API no lista */ }
+  try {
+    const cur = edata; const prev = fichaEpisodes.value[fichaIndex.value + 1]?.data; const changed = {};
+    if (prev) {
+      const SKIP = new Set(['id', 'fecha', 'medico_id', 'patient_id', 'estado', 'tipo', 'created_at', 'updated_at', 'ficha_num', 'examinador_nombre', 'gravedad_total', 'location']);
+      const norm = v => (v === null || v === undefined || v === false || v === '') ? '' : String(v);
+      for (const k of new Set([...Object.keys(cur), ...Object.keys(prev)])) {
+        if (SKIP.has(k) || k.includes(':')) continue;
+        if (norm(cur[k]) !== norm(prev[k])) changed[k] = prev[k];
+      }
+    }
+    frame.contentWindow.markChanges?.(changed);
+  } catch { /* diff best-effort */ }
+}
+function printFicha() { fichaFrame.value?.contentWindow?.print(); }
 
 function onKey(ev) {
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); onSubmit(); }
@@ -276,6 +422,18 @@ function reset() {
   pendingAttachment.value = null;
   error.value = '';
   currentPatientId.value = null;
+  botForm.value = null;
+  bookmarks.value = [];
+  activeEpisodeId.value = null;
+  showSections.value = false;
+}
+
+// Botón "Nueva consulta": abre un episodio nuevo (cualquier médico). El anterior
+// queda en el hilo del paciente. Reusa el comando server-side 'nuevo episodio'.
+function nuevaConsulta() {
+  if (busy.value) return;
+  showSections.value = false;
+  send('nuevo episodio');
 }
 
 // Fetch + render the patient's merged group thread. Does not toggle busy (the
@@ -320,6 +478,7 @@ async function openPatient(uuid, name) {
     const r = await chat('activar paciente ' + uuid, sid); // server-side, no LLM
     if (currentPatientId.value !== uuid) return;
     if (r?.session_id) { sessionId.value = r.session_id; saveSessionId(r.session_id); }
+    captureFicha(r);                                        // secciones (bookmarks) + episodio
     await reloadThread();
   } catch (e) {
     if (currentPatientId.value === uuid) error.value = e.message || String(e);
@@ -356,6 +515,42 @@ defineExpose({ openPatient, newGeneral });
 }
 .ihead-actions button:hover:not(:disabled) { background: rgba(255,255,255,.28); }
 .ihead-actions button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Dropdown de secciones de la ficha. */
+.ihead-sections { position: relative; display: inline-flex; }
+.sections-panel {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 70;
+  width: min(280px, 80vw); max-height: 60vh; overflow-y: auto;
+  background: #fff; color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 4px 0;
+}
+.sections-cat { font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 6px 12px 2px; }
+.sections-item {
+  width: 100%; text-align: left; border: 0; background: transparent; color: var(--text);
+  padding: 7px 12px; font-size: 0.84rem; cursor: pointer; display: flex; gap: 8px; align-items: center;
+}
+.sections-item:hover:not(:disabled) { background: var(--bg); }
+.sections-item.done { color: var(--text-muted); }
+.sections-item .sec-check { color: #16a34a; font-weight: 800; width: 12px; }
+.sections-item:not(.done) .sec-check { color: var(--text-muted); }
+
+/* Form inline de una sección de la ficha. */
+.iform { position: relative; align-self: stretch; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+.iform-close { position: absolute; top: 6px; right: 8px; z-index: 2; border: 0; background: transparent; color: var(--text-muted); font-size: 1rem; cursor: pointer; }
+
+/* Visor de ficha (iframe /ficha.html). */
+.ficha-modal { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.ficha-panel { background: #fff; border-radius: 10px; overflow: hidden; width: min(840px, 96vw); height: min(96vh, 1200px); display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+.ficha-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.9rem; color: var(--text); }
+.ficha-head-actions { display: flex; gap: 6px; }
+.ficha-head button { border: 1.5px solid var(--border); background: #f8fafc; color: var(--text); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-weight: 600; font-size: 0.82rem; }
+.ficha-head button:hover { border-color: var(--accent); color: var(--accent); }
+.ficha-pager { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 6px 12px; flex-shrink: 0; background: var(--bg); border-bottom: 1px solid var(--border); }
+.ficha-pager button { border: 1.5px solid var(--border); background: #fff; color: var(--text); border-radius: 6px; padding: 3px 12px; cursor: pointer; font-weight: 600; font-size: 0.8rem; }
+.ficha-pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.ficha-pager button:disabled { opacity: .4; cursor: not-allowed; }
+.fp-label { font-size: 0.82rem; color: var(--text-muted); font-weight: 600; }
+.ficha-frame { flex: 1; width: 100%; border: 0; background: #e8e8e8; }
 
 /* Group thread: sender label + distinct bubble for other clinicians (WhatsApp-style). */
 .iturn-sender { display: block; font-size: 0.72rem; font-weight: 700; margin-bottom: 3px; opacity: .92; }
