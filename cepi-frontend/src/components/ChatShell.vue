@@ -8,10 +8,7 @@
       @general="onGeneral"
     />
     <div class="shell-detail">
-      <div v-if="isMobile && view === 'chat'" class="mchat-bar">
-        <button class="mback" aria-label="Volver a la lista" @click="view = 'list'">← Pacientes</button>
-      </div>
-      <IntakeChat ref="chatRef" :user="user" class="shell-chat" @closed="onChatClosed" />
+      <IntakeChat ref="chatRef" :user="user" class="shell-chat" @closed="onChatClosed" @back="view = 'list'" />
     </div>
   </div>
 </template>

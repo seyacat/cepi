@@ -17,15 +17,6 @@
       <p v-if="createError" class="error">{{ createError }}</p>
     </form>
 
-    <button
-      class="general"
-      :class="{ active: activeId === null && generalActive }"
-      @click="$emit('general')"
-    >
-      <span class="avatar gen">＋</span>
-      <span class="info"><span class="name">Consulta general</span><span class="cc">sin paciente</span></span>
-    </button>
-
     <div class="rows" v-if="filtered.length">
       <button
         v-for="p in filtered"

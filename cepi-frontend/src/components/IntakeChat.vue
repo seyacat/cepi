@@ -1,10 +1,12 @@
 <template>
   <div class="ichat">
     <div v-if="patientName" class="ihead">
+      <button type="button" class="ihead-back" @click="$emit('back')" title="Volver a la lista" aria-label="Volver">←</button>
       <span class="ihead-name">👤 {{ patientName }}</span>
       <div class="ihead-actions">
         <div class="ihead-sections">
           <button type="button" :disabled="busy || !bookmarks.length" @click="showSections = !showSections" title="Secciones de la ficha">▤ Secciones ▾</button>
+          <button type="button" class="autoform-toggle" :class="{ on: autoForm }" @click="toggleAutoForm" :title="autoForm ? 'Auto-form ON: el bot pide el siguiente campo faltante' : 'Auto-form OFF: solo se muestra el form que abras en Secciones'">{{ autoForm ? '🔁 Auto ✓' : '🔁 Auto ✕' }}</button>
           <div v-if="showSections && bookmarks.length" class="sections-panel" @click.self="showSections = false">
             <template v-for="(grp, gi) in bookmarkGroups" :key="'sg' + gi">
               <div v-if="grp.category" class="sections-cat">{{ grp.category }}</div>
@@ -148,7 +150,7 @@ import MessageContent from './MessageContent.vue';
 import BotForm from './BotForm.vue';
 
 defineProps({ user: Object });
-const emit = defineEmits(['closed']);
+const emit = defineEmits(['closed', 'back']);
 
 const draft = ref('');
 const busy = ref(false);
@@ -166,6 +168,11 @@ const botForm = ref(null);               // form de la sección abierta (BotForm
 const bookmarks = ref([]);               // [{id,label,category,done}] de la ficha
 const activeEpisodeId = ref(null);
 const showSections = ref(false);         // dropdown de secciones
+// Auto-form ON: el bot muestra el form del siguiente campo faltante tras abrir y
+// tras cada guardado (sigue preguntando). OFF: solo muestra el form pedido en
+// "Secciones", sin auto-avanzar al siguiente.
+const autoForm = ref(localStorage.getItem('cepi.autoform') !== '0');
+function toggleAutoForm() { autoForm.value = !autoForm.value; localStorage.setItem('cepi.autoform', autoForm.value ? '1' : '0'); }
 const showFicha = ref(false);            // modal del visor de ficha
 const fichaEpisodes = ref([]);
 const fichaIndex = ref(0);
@@ -371,7 +378,7 @@ async function send(message, extra = {}) {
     if (currentPatientId.value !== uuid) return;            // patient switched → drop stale
     if (r?.session_id) { sessionId.value = r.session_id; saveSessionId(r.session_id); }
     if (typeof r?.pending_action !== 'undefined') pending.value = r.pending_action;
-    captureFicha(r);                                        // form / bookmarks / episodio
+    captureFicha(r, !!extra._explicit);                    // form / bookmarks / episodio
     await reloadThread();
   } catch (e) {
     // The send failed: drop the optimistic echo by re-syncing with the server,
@@ -387,9 +394,11 @@ async function send(message, extra = {}) {
 }
 
 // ── Ficha: secciones (dropdown), form inline y visor ────────────────────────
-function captureFicha(r) {
+function captureFicha(r, explicit = false) {
   if (!r) return;
-  if ('form' in r) botForm.value = r.form || null;
+  // Con auto-form OFF, solo mostramos el form si fue pedido explícitamente
+  // (Secciones); los forms "automáticos" (al abrir / tras guardar) se suprimen.
+  if ('form' in r) botForm.value = (explicit || autoForm.value) ? (r.form || null) : null;
   if (Array.isArray(r.bookmarks)) bookmarks.value = r.bookmarks;
   if ('active_episode_id' in r) {
     activeEpisodeId.value = r.active_episode_id || null;
@@ -400,7 +409,8 @@ function onFormSubmit(payload) { send('', { formSubmission: payload }); }
 function openBookmark(bm) {
   if (busy.value) return;
   showSections.value = false;
-  send('', { formSubmission: { form_id: 'ficha_goto', data: { group: bm.id } } });
+  // _explicit: el form pedido en Secciones siempre se muestra (aunque auto-form esté OFF).
+  send('', { formSubmission: { form_id: 'ficha_goto', data: { group: bm.id } }, _explicit: true });
 }
 function closeForm() { botForm.value = null; }
 
@@ -585,7 +595,17 @@ defineExpose({ openPatient, newGeneral });
   color: #fff; background: var(--accent-band, var(--accent)); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
-.ihead-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ihead-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Botón "volver" dentro del header del chat — solo en móvil (en desktop la lista
+   siempre está visible al lado). */
+.ihead-back {
+  display: none; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff;
+  border-radius: 50%; width: 30px; height: 30px; font-size: 1.05rem; line-height: 1; cursor: pointer;
+}
+.ihead-back:hover { background: rgba(255,255,255,.3); }
+@media (max-width: 768px) { .ihead-back { display: inline-flex; align-items: center; justify-content: center; } }
+.autoform-toggle.on { background: rgba(255,255,255,.4); border-color: #fff; }
 .ihead-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
 
 /* Barra de navegación de episodios (consultas). */
