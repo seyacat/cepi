@@ -88,8 +88,9 @@
           <strong>Derivar episodio</strong>
           <button type="button" @click="showDerivar = false">Cerrar</button>
         </div>
-        <p class="derivar-hint">Escribí el motivo (opcional) y <b>elegí un círculo o una persona</b> para derivar — se ejecuta al instante.</p>
+        <p class="derivar-hint">Escribe el motivo (opcional) y <b>elige un destino</b> para derivar — se ejecuta al instante.</p>
         <input v-model="derivarMotivo" class="derivar-motivo" type="text" placeholder="Motivo de la derivación (opcional)" />
+        <button type="button" class="derivar-resp" :disabled="busy" @click="pickResponsable" title="Derivar al médico responsable del caso (o a quien lo creó)">⭐ Al responsable del caso</button>
 
         <p v-if="derivarError" class="derivar-error">{{ derivarError }}</p>
         <p v-if="derivarLoading" class="derivar-muted">Cargando destinos…</p>
@@ -205,6 +206,10 @@ const episodeOrder = computed(() => {       // episode_ids distintos, cronológi
     const e = m.episode_id || null;
     if (!seen.has(e)) { seen.add(e); out.push(e); }
   }
+  // El episodio activo (consulta nueva) puede no tener mensajes aún → igual debe
+  // ser navegable como la página actual (vacía).
+  const ae = activeEpisodeId.value;
+  if (ae && !seen.has(ae)) out.push(ae);
   return out;
 });
 const episodeIndex = computed(() => {
@@ -309,6 +314,22 @@ async function pickPerson(m) {
   showDerivar.value = false;
   derivarMotivo.value = '';
   await send(`escalar a ${m.user_id}${motivo ? ' ' + motivo : ''}`);
+  if (!error.value) closeChat();
+}
+// Derivar al responsable del caso: el responsable_actual_id del episodio (quien
+// lo reclamó/se le asignó por turno) o, si no hay, el médico que lo creó.
+async function pickResponsable() {
+  const epId = activeEpisodeId.value;
+  if (!epId) { derivarError.value = 'No hay episodio activo.'; return; }
+  derivarError.value = '';
+  const ep = await fetchEntity(epId);
+  const d = ep?.data || {};
+  const uid = d.responsable_actual_id || d.medico_id || '';
+  if (!uid) { derivarError.value = 'El episodio no tiene responsable ni creador definido.'; return; }
+  const motivo = derivarMotivo.value.trim();
+  showDerivar.value = false;
+  derivarMotivo.value = '';
+  await send(`escalar a ${uid}${motivo ? ' ' + motivo : ''}`);
   if (!error.value) closeChat();
 }
 
@@ -676,6 +697,14 @@ defineExpose({ openPatient, newGeneral });
   font-size: 0.88rem; background: var(--bg); color: var(--text); outline: none;
 }
 .derivar-motivo:focus { border-color: var(--accent); }
+.derivar-resp {
+  margin: 0 14px 8px; width: calc(100% - 28px); box-sizing: border-box;
+  padding: 9px 10px; border: 1px solid var(--accent); border-radius: 8px;
+  background: var(--accent-band, #eef6fb); color: var(--accent); font-weight: 700;
+  font-size: 0.88rem; cursor: pointer; text-align: left;
+}
+.derivar-resp:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.derivar-resp:disabled { opacity: .5; cursor: not-allowed; }
 .derivar-error { margin: 6px 14px; color: #c43d3d; font-size: 0.82rem; }
 .derivar-muted { color: var(--text-muted); font-size: 0.84rem; padding: 4px 6px; list-style: none; }
 .derivar-list { list-style: none; margin: 6px 0 10px; padding: 0 8px; overflow-y: auto; }

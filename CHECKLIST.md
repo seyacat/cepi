@@ -12,8 +12,10 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ Lista ordena primero los pacientes derivados a mí (badge "🔔 revisar") — deploy
 - ✅ Dropdown "Secciones" de la ficha con ✓ en las llenas → abre form inline de cada una — deploy
 - ✅ Botón "Ver ficha" (visor read-only, iframe /ficha.html) — deploy
-- ✅ Quitar botón "Cerrar" → "Nueva consulta" (nuevo episodio, cualquier médico; el anterior queda en el hilo) — deploy
-- ⬜ Botón Derivar: opción "Derivar al responsable" (responsable_actual_id; si no, el creador del caso)
+- ✅ Quitar botón "Cerrar" → "Nueva consulta" (nuevo episodio, cualquier médico) — deploy
+- ✅ Navegación por episodios con flechas ‹ › (nueva consulta = página vacía; anteriores solo-lectura; sellado de episode_id por turno) — deploy
+- ✅ Botón Derivar: opción "⭐ Al responsable del caso" (responsable_actual_id; si no, el creador) — deploy
+- ✅ Al crear episodio, no mostrar "Episodio creado (id…)" ni el comando (ruido) — deploy
 - ⬜ En la card del paciente, mostrar a quién está derivado cada paciente
 
 ## Reglas / backend
