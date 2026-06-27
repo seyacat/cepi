@@ -52,7 +52,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { listPatients, createPatient, getReviewQueue } from '../api.js';
 
 defineProps({
@@ -125,24 +125,30 @@ const filtered = computed(() => {
   }).map(x => x.p);
 });
 
-async function load() {
-  busy.value = true;
-  error.value = '';
+async function load(silent = false) {
+  if (!silent) { busy.value = true; error.value = ''; }
   try {
     const r = await listPatients({});
     all.value = Array.isArray(r?.data) ? r.data : [];
     try {
       const rq = await getReviewQueue();
       reviewQueue.value = rq?.by_patient || {};
-    } catch { reviewQueue.value = {}; }
+    } catch { /* keep previous queue on transient error */ }
   } catch (e) {
-    error.value = e.message || String(e);
+    if (!silent) error.value = e.message || String(e);
   } finally {
-    busy.value = false;
+    if (!silent) busy.value = false;
   }
 }
 
-onMounted(load);
+// Poll en segundo plano para que las derivaciones recibidas aparezcan en la
+// lista (arriba, con badge "revisar") sin tener que refrescar a mano.
+let pollTimer = null;
+onMounted(() => {
+  load();
+  pollTimer = setInterval(() => load(true), 20000);
+});
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 defineExpose({ reload: load });
 </script>
 

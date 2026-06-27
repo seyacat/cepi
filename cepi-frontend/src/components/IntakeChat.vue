@@ -276,6 +276,7 @@ async function reloadThread() {
     const r = await getPatientThread(uuid);
     if (currentPatientId.value !== uuid) return;            // patient switched → drop
     messages.value = Array.isArray(r?.messages) ? r.messages : [];
+    await scrollEnd();                                       // al abrir/recargar, ir al último mensaje
   } catch (e) {
     if (currentPatientId.value === uuid) error.value = 'No se pudo cargar el hilo: ' + (e.message || e);
   }
