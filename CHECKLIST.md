@@ -19,7 +19,7 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ browser-bot: `reload` re-loguea + keep-alive (renueva token c/40min) → las sesiones no se desloguean
 - ✅ Botón Derivar: opción "⭐ Al responsable del caso" (responsable_actual_id; si no, el creador) — deploy
 - ✅ Al crear episodio, no mostrar "Episodio creado (id…)" ni el comando (ruido) — deploy
-- ⬜ En la card del paciente, mostrar a quién está derivado cada paciente
+- ✅ En la card del paciente: quién lo tiene a cargo (responsable→derivado→creador); cambia al derivar (sirve para verificar la derivación) — deploy
 
 - ✅ Ocultar "Consulta general" (scope innecesario) — deploy
 

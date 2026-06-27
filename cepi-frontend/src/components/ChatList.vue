@@ -29,11 +29,14 @@
         <span class="info">
           <span class="name">{{ fullName(p) }}</span>
           <span class="cc">CC: {{ p.data?.cedula || '—' }}</span>
+          <span v-if="assignments[p.id]?.assignee_name" class="acargo" :title="acargoMeta(p).title">
+            {{ acargoMeta(p).icon }} {{ assignments[p.id].assignee_name }}
+          </span>
         </span>
         <span
           v-if="reviewQueue[p.id]"
           class="rev-badge"
-          :title="`${reviewQueue[p.id].pending} pendiente(s) de revisión derivada(s) a vos`"
+          :title="`${reviewQueue[p.id].pending} pendiente(s) de revisión derivadas a ti`"
         >🔔 revisar</span>
       </button>
     </div>
@@ -44,7 +47,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { listPatients, createPatient, getReviewQueue } from '../api.js';
+import { listPatients, createPatient, getReviewQueue, getPatientAssignments } from '../api.js';
 
 defineProps({
   activeId: { type: String, default: null },
@@ -54,6 +57,15 @@ const emit = defineEmits(['select', 'general']);
 
 const all = ref([]);
 const reviewQueue = ref({});   // { patientId: { pending, earliest_due } } — derived to me
+const assignments = ref({});   // { patientId: { assignee_name, source, ... } } — a cargo
+
+// Icono + tooltip según cómo quedó "a cargo" el responsable.
+function acargoMeta(p) {
+  const a = assignments.value[p.id] || {};
+  if (a.source === 'derivado') return { icon: '↪️', title: 'Derivado a (pendiente de revisión)' };
+  if (a.source === 'creador') return { icon: '👤', title: 'Médico que creó el caso' };
+  return { icon: '🩺', title: 'Responsable del caso' };
+}
 const q = ref('');
 const busy = ref(false);
 const error = ref('');
@@ -125,6 +137,10 @@ async function load(silent = false) {
       const rq = await getReviewQueue();
       reviewQueue.value = rq?.by_patient || {};
     } catch { /* keep previous queue on transient error */ }
+    try {
+      const as = await getPatientAssignments();
+      assignments.value = as?.assignments || {};
+    } catch { /* keep previous assignments on transient error */ }
   } catch (e) {
     if (!silent) error.value = e.message || String(e);
   } finally {
@@ -184,6 +200,7 @@ defineExpose({ reload: load });
 .info { display: flex; flex-direction: column; min-width: 0; }
 .name { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cc { font-size: 0.78rem; color: var(--text-muted); }
+.acargo { font-size: 0.76rem; color: var(--accent); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .newpat {
   margin: 8px 10px 4px; padding: 9px; border: none; border-radius: 20px;
   background: var(--accent); color: #fff; font-weight: 700; font-size: 0.88rem; cursor: pointer;

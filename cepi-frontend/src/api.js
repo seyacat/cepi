@@ -115,6 +115,11 @@ export async function getReviewQueue() {
   return call('/api/review-queue', { method: 'GET' });
 }
 
+// Quién tiene "a cargo" a cada paciente (responsable del episodio más reciente).
+export async function getPatientAssignments() {
+  return call('/api/patient-assignments', { method: 'GET' });
+}
+
 export async function completeReminder(id, result) {
   return call(`/api/reminders/${encodeURIComponent(id)}/complete`, {
     method: 'POST',
