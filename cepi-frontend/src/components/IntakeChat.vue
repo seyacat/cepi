@@ -58,7 +58,9 @@
           <strong>Derivar episodio</strong>
           <button type="button" @click="showDerivar = false">Cerrar</button>
         </div>
-        <p class="derivar-hint">Elegí un <b>círculo</b> o una <b>persona</b>. Luego podés agregar el motivo y enviar.</p>
+        <p class="derivar-hint">Escribí el motivo (opcional) y <b>elegí un círculo o una persona</b> para derivar — se ejecuta al instante.</p>
+        <input v-model="derivarMotivo" class="derivar-motivo" type="text" placeholder="Motivo de la derivación (opcional)" />
+
         <p v-if="derivarError" class="derivar-error">{{ derivarError }}</p>
         <p v-if="derivarLoading" class="derivar-muted">Cargando destinos…</p>
         <ul v-else class="derivar-list">
@@ -131,6 +133,7 @@ const showDerivar    = ref(false);
 const derivarGroups  = ref([]);
 const derivarLoading = ref(false);
 const derivarError   = ref('');
+const derivarMotivo  = ref('');          // motivo opcional para la derivación
 const expandedGroup  = ref('');          // slug currently expanded to show members
 const groupMembers   = ref({});          // slug → members[] (cached)
 
@@ -174,14 +177,19 @@ async function toggleMembers(g) {
   }
 }
 
-// Circle → "derivar a <slug>" (motivo optional). Person → "escalar a <uuid>".
+// Elegir un destino EJECUTA la derivación (antes solo la pre-escribía en el
+// input). Círculo → "derivar a <slug> [motivo]". Persona → "escalar a <uuid> [motivo]".
 function pickCircle(g) {
+  const motivo = derivarMotivo.value.trim();
   showDerivar.value = false;
-  prefillCommand(`derivar a ${g.slug} `);
+  derivarMotivo.value = '';
+  send(`derivar a ${g.slug}${motivo ? ' ' + motivo : ''}`);
 }
 function pickPerson(m) {
+  const motivo = derivarMotivo.value.trim();
   showDerivar.value = false;
-  prefillCommand(`escalar a ${m.user_id} `);
+  derivarMotivo.value = '';
+  send(`escalar a ${m.user_id}${motivo ? ' ' + motivo : ''}`);
 }
 
 async function scrollEnd() {
@@ -367,6 +375,12 @@ defineExpose({ openPatient, newGeneral });
 }
 .derivar-head button:hover { border-color: var(--accent); color: var(--accent); }
 .derivar-hint { margin: 10px 14px 4px; font-size: 0.82rem; color: var(--text-muted); }
+.derivar-motivo {
+  margin: 4px 14px 8px; width: calc(100% - 28px); box-sizing: border-box;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px;
+  font-size: 0.88rem; background: var(--bg); color: var(--text); outline: none;
+}
+.derivar-motivo:focus { border-color: var(--accent); }
 .derivar-error { margin: 6px 14px; color: #c43d3d; font-size: 0.82rem; }
 .derivar-muted { color: var(--text-muted); font-size: 0.84rem; padding: 4px 6px; list-style: none; }
 .derivar-list { list-style: none; margin: 6px 0 10px; padding: 0 8px; overflow-y: auto; }
