@@ -18,7 +18,6 @@
           <span class="user-id">{{ user.email }} · {{ user.role }}</span>
           <Notifications v-if="!isPending" />
           <button v-if="isAdmin" @click="showAdmin = !showAdmin">{{ showAdmin ? 'Chat' : 'Admin' }}</button>
-          <button @click="toggleDark" :title="dark ? 'Modo claro' : 'Modo oscuro'">{{ dark ? '☀' : '☾' }}</button>
           <button @click="onLogout">Salir</button>
         </span>
       </div>
@@ -72,17 +71,8 @@ function goLogin() {
 bindBackState(() => view.value === 'register', () => { view.value = 'login'; });
 bindBackState(() => view.value === 'verify', () => { goLogin(); }, { immediate: true });
 bindBackState(() => showAdmin.value, () => { showAdmin.value = false; });
-const dark = ref(localStorage.getItem('cepi.theme') === 'dark');
-
-function applyTheme() {
-  document.documentElement.dataset.theme = dark.value ? 'dark' : 'light';
-}
-function toggleDark() {
-  dark.value = !dark.value;
-  localStorage.setItem('cepi.theme', dark.value ? 'dark' : 'light');
-  applyTheme();
-}
-applyTheme();
+// Tema claro fijo por ahora (se quitó el toggle de modo oscuro).
+document.documentElement.dataset.theme = 'light';
 
 async function refresh() {
   if (!localStorage.getItem('cepi.jwt')) { authed.value = false; return; }

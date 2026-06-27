@@ -24,6 +24,9 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ Ocultar "Consulta general" (scope innecesario) — deploy
 
 ## Reglas / backend
+- ✅ La campana "🔔 revisar" del card mira solo el episodio más reciente del paciente (recordatorios de episodios viejos no la encienden) — deploy
+- ✅ Quitar el botón de tema oscuro (siempre tema claro por ahora) — deploy
+
 - ✅ Al derivar/escalar, se completa el recordatorio propio → la campana "revisar" del que reenvía se limpia — deploy
 - ✅ Título de la barra: "Telemedicina" (antes "Asistente clínico") — deploy
 
