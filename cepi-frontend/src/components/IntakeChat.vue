@@ -3,7 +3,8 @@
     <div v-if="patientName" class="ihead">
       <button type="button" class="ihead-back" @click="$emit('back')" title="Volver a la lista" aria-label="Volver">←</button>
       <span class="ihead-name">👤 {{ patientName }}</span>
-      <div class="ihead-actions">
+      <button type="button" class="ihead-burger" @click="showMenu = !showMenu" aria-label="Opciones" :aria-expanded="showMenu">☰</button>
+      <div class="ihead-actions" :class="{ open: showMenu }">
         <div class="ihead-sections">
           <button type="button" :disabled="busy || !bookmarks.length" @click="showSections = !showSections" title="Secciones de la ficha">▤ Secciones ▾</button>
           <button type="button" class="autoform-toggle" :class="{ on: autoForm }" @click="toggleAutoForm" :title="autoForm ? 'Auto-form ON: el bot pide el siguiente campo faltante' : 'Auto-form OFF: solo se muestra el form que abras en Secciones'">{{ autoForm ? '🔁 Auto ✓' : '🔁 Auto ✕' }}</button>
@@ -172,8 +173,9 @@ const showSections = ref(false);         // dropdown de secciones
 // Auto-form ON: el bot muestra el form del siguiente campo faltante tras abrir y
 // tras cada guardado (sigue preguntando). OFF: solo muestra el form pedido en
 // "Secciones", sin auto-avanzar al siguiente.
-const autoForm = ref(localStorage.getItem('cepi.autoform') !== '0');
+const autoForm = ref(localStorage.getItem('cepi.autoform') === '1');   // OFF por defecto
 function toggleAutoForm() { autoForm.value = !autoForm.value; localStorage.setItem('cepi.autoform', autoForm.value ? '1' : '0'); }
+const showMenu = ref(false);             // burger de acciones (mobile)
 const showFicha = ref(false);            // modal del visor de ficha
 const fichaEpisodes = ref([]);
 const fichaIndex = ref(0);
@@ -279,6 +281,7 @@ function prefillCommand(text) {
 
 async function openDerivar() {
   showDerivar.value = true;
+  showMenu.value = false;
   derivarError.value = '';
   expandedGroup.value = '';
   if (derivarGroups.value.length) return;   // cached from a previous open
@@ -411,6 +414,7 @@ function onFormSubmit(payload) { send('', { formSubmission: payload }); }
 function openBookmark(bm) {
   if (busy.value) return;
   showSections.value = false;
+  showMenu.value = false;
   // _explicit: el form pedido en Secciones siempre se muestra (aunque auto-form esté OFF).
   send('', { formSubmission: { form_id: 'ficha_goto', data: { group: bm.id } }, _explicit: true });
 }
@@ -436,6 +440,7 @@ async function fetchEpisodes(patientId) {
 }
 async function openFicha() {
   if (!currentPatientId.value) return;
+  showMenu.value = false;
   fichaEpisodes.value = []; fichaIndex.value = 0;
   const eps = await fetchEpisodes(currentPatientId.value);
   fichaEpisodes.value = eps;
@@ -546,6 +551,7 @@ function reset() {
 function nuevaConsulta() {
   if (busy.value) return;
   showSections.value = false;
+  showMenu.value = false;
   send('nuevo episodio');
 }
 
@@ -615,9 +621,43 @@ defineExpose({ openPatient, newGeneral });
   overflow: hidden;
 }
 .ihead {
+  position: relative;
   flex-shrink: 0; padding: 8px 12px; font-weight: 700; font-size: 0.92rem;
   color: #fff; background: var(--accent-band, var(--accent)); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+/* Burger de acciones — solo móvil. */
+.ihead-burger {
+  display: none; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff;
+  border-radius: 8px; width: 32px; height: 30px; font-size: 1rem; line-height: 1; cursor: pointer;
+}
+.ihead-burger:hover { background: rgba(255,255,255,.3); }
+@media (max-width: 768px) {
+  .ihead-burger { display: inline-flex; align-items: center; justify-content: center; }
+  /* Las acciones pasan a un menú desplegable (burger). */
+  .ihead-actions {
+    display: none;
+    position: absolute; top: calc(100% + 4px); right: 6px; z-index: 75;
+    flex-direction: column; align-items: stretch; gap: 4px; flex-wrap: nowrap;
+    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0,0,0,.28); padding: 6px; min-width: 200px; max-width: 84vw;
+  }
+  .ihead-actions.open { display: flex; }
+  .ihead-actions .ihead-sections { display: block; width: 100%; }
+  /* Botones del menú: texto oscuro sobre blanco (no la banda del header). */
+  .ihead-actions.open > button,
+  .ihead-actions.open .ihead-sections > button {
+    color: var(--text); background: #fff; border: 1px solid var(--border);
+    border-radius: 8px; text-align: left; width: 100%; padding: 8px 10px; font-weight: 600;
+  }
+  .ihead-actions.open button:hover:not(:disabled) { background: var(--bg); }
+  .ihead-actions.open .autoform-toggle.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* La lista de secciones se muestra inline dentro del menú (no panel flotante). */
+  .ihead-actions.open .sections-panel {
+    position: static; box-shadow: none; border: 0; border-top: 1px solid var(--border);
+    border-radius: 0; width: auto; max-height: 40vh; margin-top: 4px; padding: 2px 0;
+  }
 }
 .ihead-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Botón "volver" dentro del header del chat — solo en móvil (en desktop la lista
