@@ -24,6 +24,13 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ Ocultar "Consulta general" (scope innecesario) — deploy
 
 ## Reglas / backend
+- ✅ Aviso 'cambios sin guardar' al cerrar el visor de ficha — deploy
+- ✅ Catálogo CIE-10 también limpiado en prod (datos+def+form+nav) — prod
+
+- ✅ Visor de ficha: botón **Guardar** (antes editabas y se descartaba sin aviso) — deploy
+- ✅ Eliminado catálogo CIE-10 local (def+form+nav+seed+comando bot); diagnóstico = ICD-11 OMS único — deploy
+- ✅ Limpieza de data clínica de prueba (pacientes/episodios/chats/reminders) — local
+
 - ✅ La campana "🔔 revisar" del card mira solo el episodio más reciente del paciente (recordatorios de episodios viejos no la encienden) — deploy
 - ✅ Quitar el botón de tema oscuro (siempre tema claro por ahora) — deploy
 
