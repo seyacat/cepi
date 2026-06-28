@@ -26,6 +26,10 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ En mobile las acciones del header van en un burger (☰) para no ensuciar — deploy
 
 ## Reglas / backend
+- ✅ Pregunta lesión/consentimiento (al subir imagen) como botones (quick_replies) — deploy
+- ✅ Imágenes de lesión/consentimiento se ven inline en el chat (sin abrir) — deploy
+- ✅ Click en la imagen → lightbox a pantalla completa con zoom (rueda/doble-toque/pinch) + pan — deploy
+
 - ✅ Aviso 'cambios sin guardar' al cerrar el visor de ficha — deploy
 - ✅ Catálogo CIE-10 también limpiado en prod (datos+def+form+nav) — prod
 
