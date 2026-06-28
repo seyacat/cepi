@@ -128,6 +128,7 @@
         <div class="ficha-head">
           <strong>Ficha clínica — {{ patientName || 'Paciente' }}</strong>
           <div class="ficha-head-actions">
+            <button type="button" class="fh-save" @click="onSaveFicha">Guardar</button>
             <button type="button" @click="printFicha">Imprimir</button>
             <button type="button" @click="showFicha = false">Cerrar</button>
           </div>
@@ -476,6 +477,17 @@ async function onFichaLoad() {
   } catch { /* diff best-effort */ }
 }
 function printFicha() { fichaFrame.value?.contentWindow?.print(); }
+// Guardar lo editado en el visor: lee el iframe y persiste vía bot (ficha_save
+// actualiza paciente + episodio). Sin esto, editar y cerrar descartaba sin aviso.
+function onSaveFicha() {
+  const frame = fichaFrame.value;
+  if (!frame?.contentWindow?.readFicha) return;
+  let data;
+  try { data = frame.contentWindow.readFicha(); } catch { return; }
+  const ep = fichaEpisodes.value[fichaIndex.value];
+  showFicha.value = false;
+  send('', { formSubmission: { form_id: 'ficha_save', episode_id: ep?.id || null, data } });
+}
 
 function onKey(ev) {
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); onSubmit(); }
@@ -672,6 +684,8 @@ defineExpose({ openPatient, newGeneral });
 .ficha-panel { background: #fff; border-radius: 10px; overflow: hidden; width: min(840px, 96vw); height: min(96vh, 1200px); display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
 .ficha-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.9rem; color: var(--text); }
 .ficha-head-actions { display: flex; gap: 6px; }
+.ficha-head button.fh-save { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ficha-head button.fh-save:hover { background: var(--accent-hover, var(--accent)); color: #fff; }
 .ficha-head button { border: 1.5px solid var(--border); background: #f8fafc; color: var(--text); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-weight: 600; font-size: 0.82rem; }
 .ficha-head button:hover { border-color: var(--accent); color: var(--accent); }
 .ficha-pager { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 6px 12px; flex-shrink: 0; background: var(--bg); border-bottom: 1px solid var(--border); }
