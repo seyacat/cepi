@@ -15,7 +15,8 @@
         v-else-if="blobUrls[seg.id]"
         class="seg-img"
         :src="blobUrls[seg.id]"
-        alt="Imagen clínica"
+        :alt="seg.name || 'Imagen clínica'"
+        :title="seg.name || ''"
       />
       <span v-else class="seg-loading">🖼️ cargando imagen…</span>
     </template>
@@ -28,18 +29,22 @@ import { fetchAttachmentObjectUrl } from '../api.js';
 
 const props = defineProps({ content: { type: String, default: '' } });
 
-const IMG_RE = /\[img:([0-9a-f-]{36})\]/gi;
+// Soporta dos marcadores de imagen: `[img:<uuid>]` (lo emite el bot) y
+// `[adjunto: <nombre> · <uuid>]` (lo emite el uploader del chat). Ambos se
+// renderizan inline para ver las imágenes (lesión/consentimiento) sin abrirlas.
+const SEG_RE = /\[img:([0-9a-f-]{36})\]|\[adjunto:\s*([^·\]]+?)\s*·\s*([0-9a-f-]{36})\s*\]/gi;
 
 // Split the content into ordered text / image segments.
 const segments = computed(() => {
   const out = [];
   let last = 0;
-  const re = new RegExp(IMG_RE);
+  const re = new RegExp(SEG_RE);
   let m;
   while ((m = re.exec(props.content)) !== null) {
     const before = props.content.slice(last, m.index).replace(/\s+$/, '');
     if (before) out.push({ type: 'text', text: before });
-    out.push({ type: 'image', id: m[1].toLowerCase() });
+    const id = (m[1] || m[3] || '').toLowerCase();
+    out.push({ type: 'image', id, name: (m[2] || '').trim() });
     last = m.index + m[0].length;
   }
   const rest = props.content.slice(last).replace(/^\n+/, '');
