@@ -51,6 +51,10 @@
         <BotForm :key="botForm.id" :form="botForm" :busy="busy" @send="send" @submit="onFormSubmit" />
       </div>
 
+      <div v-if="quickReplies.length && !busy" class="iquick">
+        <button v-for="(q, i) in quickReplies" :key="i" type="button" class="iquick-btn" @click="onQuickReply(q)">{{ q.label }}</button>
+      </div>
+
       <div v-if="pending" class="ipending">
         <p class="ipending-summary">{{ pending.summary }}</p>
         <div class="ipending-actions">
@@ -162,6 +166,7 @@ const uploading = ref(false);
 const error = ref('');
 const sessionId = ref(null);             // the caller's OWN writable session for this patient
 const pending = ref(null);
+const quickReplies = ref([]);            // botones de respuesta rápida que devuelve el bot
 const pendingAttachment = ref(null);
 const patientName = ref('');
 const feedEl = ref(null);
@@ -385,6 +390,7 @@ async function send(message, extra = {}) {
     if (currentPatientId.value !== uuid) return;            // patient switched → drop stale
     if (r?.session_id) { sessionId.value = r.session_id; saveSessionId(r.session_id); }
     if (typeof r?.pending_action !== 'undefined') pending.value = r.pending_action;
+    quickReplies.value = Array.isArray(r?.quick_replies) ? r.quick_replies : [];
     captureFicha(r, !!extra._explicit);                    // form / bookmarks / episodio
     await reloadThread();
   } catch (e) {
@@ -413,6 +419,7 @@ function captureFicha(r, explicit = false) {
   }
 }
 function onFormSubmit(payload) { send('', { formSubmission: payload }); }
+function onQuickReply(q) { if (busy.value) return; quickReplies.value = []; send(q.send); }
 function openBookmark(bm) {
   if (busy.value) return;
   showSections.value = false;
@@ -538,6 +545,7 @@ function reset() {
   localStorage.removeItem('cepi.session_id');
   messages.value = [];
   pending.value = null;
+  quickReplies.value = [];
   pendingAttachment.value = null;
   error.value = '';
   currentPatientId.value = null;
@@ -599,6 +607,7 @@ async function openPatient(uuid, name) {
     const r = await chat('activar paciente ' + uuid, sid); // server-side, no LLM
     if (currentPatientId.value !== uuid) return;
     if (r?.session_id) { sessionId.value = r.session_id; saveSessionId(r.session_id); }
+    quickReplies.value = Array.isArray(r?.quick_replies) ? r.quick_replies : [];
     captureFicha(r);                                        // secciones (bookmarks) + episodio
     await reloadThread();
   } catch (e) {
@@ -828,6 +837,9 @@ defineExpose({ openPatient, newGeneral });
 .iturn.user { align-self: flex-end; background: var(--user-bg, #2596be); color: var(--user-text, #fff); border-bottom-right-radius: 4px; }
 .iturn.assistant, .iturn.tool { align-self: flex-start; background: var(--bot-bg, #f1f5f9); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .thinking { color: var(--text-muted); font-style: italic; }
+.iquick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.iquick-btn { border: 1.5px solid var(--accent); background: #fff; color: var(--accent); border-radius: 18px; padding: 8px 16px; font-weight: 700; font-size: 0.88rem; cursor: pointer; }
+.iquick-btn:hover { background: var(--accent); color: #fff; }
 .ipending { align-self: stretch; background: #fefce8; border: 2px solid #facc15; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .ipending-summary { margin: 0; color: #422006; font-size: 0.9rem; }
 .ipending-actions { display: flex; gap: 8px; }
