@@ -123,14 +123,14 @@
       </div>
     </div>
 
-    <div v-if="showFicha" class="ficha-modal" @click.self="showFicha = false">
+    <div v-if="showFicha" class="ficha-modal" @click.self="closeFicha">
       <div class="ficha-panel">
         <div class="ficha-head">
           <strong>Ficha clínica — {{ patientName || 'Paciente' }}</strong>
           <div class="ficha-head-actions">
             <button type="button" class="fh-save" @click="onSaveFicha">Guardar</button>
             <button type="button" @click="printFicha">Imprimir</button>
-            <button type="button" @click="showFicha = false">Cerrar</button>
+            <button type="button" @click="closeFicha">Cerrar</button>
           </div>
         </div>
         <div v-if="fichaEpisodes.length > 1" class="ficha-pager">
@@ -178,6 +178,7 @@ const showFicha = ref(false);            // modal del visor de ficha
 const fichaEpisodes = ref([]);
 const fichaIndex = ref(0);
 const fichaFrame = ref(null);
+const fichaInitial = ref('');            // snapshot del visor al cargar (para detectar cambios sin guardar)
 
 // Secciones agrupadas por categoría para el dropdown.
 const bookmarkGroups = computed(() => {
@@ -475,6 +476,17 @@ async function onFichaLoad() {
     }
     frame.contentWindow.markChanges?.(changed);
   } catch { /* diff best-effort */ }
+  // Snapshot del estado cargado, para detectar ediciones sin guardar al cerrar.
+  try { fichaInitial.value = JSON.stringify(frame.contentWindow.readFicha?.() || {}); } catch { fichaInitial.value = ''; }
+}
+
+// Cerrar el visor avisando si hay cambios sin guardar (el visor es editable).
+function closeFicha() {
+  let cur = '';
+  try { cur = JSON.stringify(fichaFrame.value?.contentWindow?.readFicha?.() || {}); } catch { cur = ''; }
+  if (cur && fichaInitial.value && cur !== fichaInitial.value
+      && !confirm('Hay cambios sin guardar en la ficha. ¿Cerrar y descartarlos?')) return;
+  showFicha.value = false;
 }
 function printFicha() { fichaFrame.value?.contentWindow?.print(); }
 // Guardar lo editado en el visor: lee el iframe y persiste vía bot (ficha_save
