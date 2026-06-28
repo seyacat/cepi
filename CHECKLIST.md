@@ -14,7 +14,7 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ Botón "Ver ficha" (visor read-only, iframe /ficha.html) — deploy
 - ✅ Quitar botón "Cerrar" → "Nueva consulta" (nuevo episodio, cualquier médico) — deploy
 - ✅ Navegación por episodios con flechas ‹ › (nueva consulta = página vacía; anteriores solo-lectura; sellado de episode_id por turno) — deploy
-- ✅ Toggle "Auto-form" junto a Secciones: ON sigue pidiendo el siguiente campo faltante; OFF solo muestra el form que abras — deploy
+- ✅ Toggle "Auto-form" (OFF por defecto): ON pide el siguiente campo faltante; OFF solo el form que abras — deploy
 - ✅ Botón "volver" (←) dentro del header del chat (no en el header de página); se quitó "← Pacientes" truncado — deploy
 - ✅ browser-bot: `reload` re-loguea + keep-alive (renueva token c/40min) → las sesiones no se desloguean
 - ✅ Botón Derivar: opción "⭐ Al responsable del caso" (responsable_actual_id; si no, el creador) — deploy
@@ -22,6 +22,8 @@ Estado: ✅ hecho · 🛠️ en progreso · ⬜ pendiente
 - ✅ En la card del paciente: quién lo tiene a cargo (responsable→derivado→creador); cambia al derivar (sirve para verificar la derivación) — deploy
 
 - ✅ Ocultar "Consulta general" (scope innecesario) — deploy
+
+- ✅ En mobile las acciones del header van en un burger (☰) para no ensuciar — deploy
 
 ## Reglas / backend
 - ✅ Aviso 'cambios sin guardar' al cerrar el visor de ficha — deploy
