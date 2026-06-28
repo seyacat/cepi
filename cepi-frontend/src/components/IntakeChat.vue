@@ -1,7 +1,9 @@
 <template>
   <div class="ichat">
     <div v-if="patientName" class="ihead">
-      <button type="button" class="ihead-back" @click="$emit('back')" title="Volver a la lista" aria-label="Volver">←</button>
+      <button type="button" class="ihead-back" @click="$emit('back')" title="Volver a la lista" aria-label="Volver">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </button>
       <span class="ihead-name">👤 {{ patientName }}</span>
       <button type="button" class="ihead-burger" @click="showMenu = !showMenu" aria-label="Opciones" :aria-expanded="showMenu">☰</button>
       <div class="ihead-actions" :class="{ open: showMenu }">
@@ -635,15 +637,16 @@ defineExpose({ openPatient, newGeneral });
 .ihead-burger:hover { background: rgba(255,255,255,.3); }
 @media (max-width: 768px) {
   .ihead-burger { display: inline-flex; align-items: center; justify-content: center; }
-  /* Las acciones pasan a un menú desplegable (burger). */
-  .ihead-actions {
+  /* Las acciones pasan a un menú desplegable (burger). `.ihead` para ganar
+     especificidad sobre la regla base `.ihead-actions { display:flex }`. */
+  .ihead .ihead-actions {
     display: none;
     position: absolute; top: calc(100% + 4px); right: 6px; z-index: 75;
     flex-direction: column; align-items: stretch; gap: 4px; flex-wrap: nowrap;
     background: #fff; border: 1px solid var(--border); border-radius: 10px;
     box-shadow: 0 12px 30px rgba(0,0,0,.28); padding: 6px; min-width: 200px; max-width: 84vw;
   }
-  .ihead-actions.open { display: flex; }
+  .ihead .ihead-actions.open { display: flex; }
   .ihead-actions .ihead-sections { display: block; width: 100%; }
   /* Botones del menú: texto oscuro sobre blanco (no la banda del header). */
   .ihead-actions.open > button,
