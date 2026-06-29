@@ -72,8 +72,10 @@ Agregar `AND org_id = $orgActiva` en los gates clínicos (además del view_own/v
 ---
 
 ## ESTADO
-- **Fase 1 (modelo + migración) — HECHO** (local + prod): migración `016_organizations.sql` (orgs `cepi` + `cepi-testing`, `user_organizations`, `org_id` en episode/bot_session + 5 hijas, backfill+memberships), y `org_id` agregado a `RESERVED_COLS` en `columnSyncService.ts`.
-- Pendiente Fase 2 (scoping + stampado en creación + JWT/switch) y Fase 3 (admin/UI). **Reset-safety**: en un reset fresco las migraciones corren antes de materializar las tablas `entity_*`, así que los `ALTER org_id` se omiten; atar esto en Fase 2 (hook post-materialización o flag `config.org_scoped`).
+- **Fase 1 (modelo + migración) — HECHO** (local + prod): migración `016_organizations.sql`, `org_id` reservado en `columnSyncService`.
+- **Fase 2 (identidad + scoping) — HECHO** (local + prod): `org_id` en JWT (login/me), `getUserOrgs/isOrgAdmin/isOrgMember`, `orgsRouter` (GET /api/orgs + POST /switch), estampado de `org_id` al crear (entityTableService), scoping por org en patient-thread/review-queue/patient-assignments/getList, y **dropdown de org activa** en el topbar. E2E verde (paciente global, chats/fichas aislados por org).
+- **Fase 3 (administración) — HECHO** (local; deploy en curso): orgsRouter CRUD (crear/editar/desactivar org = superadmin; miembros = superadmin o admin-de-org), componente `AdminOrgs.vue` (tab en Admin). Gating verificado (req 5/6).
+- **Pendiente menor**: reset-safety del `org_id` en reset fresco (las migraciones corren antes de materializar `entity_*`); request_review cross-org (impedir derivar a otra org).
 
 ## CHECKLIST (alto nivel)
 - [x] Migración `016`: `organizations`, `user_organizations`, `org_id` en episode/bot_session (+hijas), índices.

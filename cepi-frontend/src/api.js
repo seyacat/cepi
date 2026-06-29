@@ -218,6 +218,24 @@ export async function switchOrg(orgId) {
   if (res?.token) localStorage.setItem('cepi.jwt', res.token);  // nueva org activa
   return res;
 }
+export async function createOrg(slug, name) {
+  return call('/api/orgs', { method: 'POST', body: JSON.stringify({ slug, name }) });
+}
+export async function updateOrg(id, patch) {
+  return call(`/api/orgs/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) });
+}
+export async function listOrgMembers(id) {
+  return call(`/api/orgs/${encodeURIComponent(id)}/members`, { method: 'GET' });
+}
+export async function addOrgMember(id, userId, roleInOrg) {
+  return call(`/api/orgs/${encodeURIComponent(id)}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId, role_in_org: roleInOrg }) });
+}
+export async function removeOrgMember(id, userId) {
+  return call(`/api/orgs/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+}
+export async function listUsers() {
+  return call('/api/security?type=user&active=all', { method: 'GET' });
+}
 
 // List patients (entity_definition 11000000-…) for the WhatsApp-style chat list.
 // PII is redacted server-side per the caller's role.

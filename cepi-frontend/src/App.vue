@@ -39,7 +39,14 @@
         <Login v-else @logged-in="onLoggedIn" @go-register="view = 'register'" />
       </template>
       <template v-else>
-        <AdminUsers v-if="showAdmin" />
+        <div v-if="showAdmin" class="admin-wrap">
+          <div class="admin-tabs">
+            <button :class="{ on: adminTab === 'users' }" @click="adminTab = 'users'">Usuarios</button>
+            <button :class="{ on: adminTab === 'orgs' }" @click="adminTab = 'orgs'">Organizaciones</button>
+          </div>
+          <AdminOrgs v-if="adminTab === 'orgs'" />
+          <AdminUsers v-else />
+        </div>
         <ChatShell v-else :user="user" />
       </template>
     </main>
@@ -53,6 +60,7 @@ import Login from './components/Login.vue';
 import Register from './components/Register.vue';
 import VerifyEmail from './components/VerifyEmail.vue';
 import AdminUsers from './components/AdminUsers.vue';
+import AdminOrgs from './components/AdminOrgs.vue';
 import PendingApproval from './components/PendingApproval.vue';
 import ChatShell from './components/ChatShell.vue';
 import Notifications from './components/Notifications.vue';
@@ -63,6 +71,7 @@ import { bindBackState } from './useBackStack.js';
 const user = ref(null);
 const authed = ref(false);
 const showAdmin = ref(false);
+const adminTab = ref('users');
 const isAdmin = computed(() => !!user.value?.permissions?.includes('*:*:*:*'));
 const isPending = computed(() => authed.value && user.value?.role === 'pendiente');
 
@@ -166,6 +175,10 @@ onMounted(refresh);
 .org-switch { border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff; border-radius: 14px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer; max-width: 200px; }
 .org-switch option { color: #1e293b; }
 .org-chip { font-size: 0.8rem; font-weight: 600; opacity: .9; white-space: nowrap; }
+.admin-wrap { height: 100%; overflow: auto; }
+.admin-tabs { display: flex; gap: 8px; padding: 12px 16px 0; }
+.admin-tabs button { border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 8px 8px 0 0; padding: 8px 16px; font-weight: 600; cursor: pointer; }
+.admin-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .notif-optin { border: 1px solid #facc15; background: #fef9c3; color: #854d0e; border-radius: 16px; padding: 4px 12px; font-weight: 700; font-size: 0.82rem; cursor: pointer; white-space: nowrap; }
 .notif-optin:hover { background: #fde68a; }
 .notif-toast {
