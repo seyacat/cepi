@@ -16,6 +16,14 @@
       <div class="header-right">
         <span v-if="user" class="user">
           <span class="user-id">{{ user.email }} · {{ user.role }}</span>
+          <select
+            v-if="user.orgs && user.orgs.length > 1"
+            class="org-switch" :value="user.org_id" :disabled="orgSwitching"
+            title="Organización activa" @change="onSwitchOrg($event.target.value)"
+          >
+            <option v-for="o in user.orgs" :key="o.id" :value="o.id">🏥 {{ o.name }}</option>
+          </select>
+          <span v-else-if="user.orgs && user.orgs.length === 1" class="org-chip" title="Organización">🏥 {{ user.orgs[0].name }}</span>
           <Notifications v-if="!isPending" />
           <button v-if="showNotifOptin && !isPending" class="notif-optin" @click="enableNotifs" title="Activar notificaciones push">🔔 Activar</button>
           <button v-if="isAdmin" @click="showAdmin = !showAdmin">{{ showAdmin ? 'Chat' : 'Admin' }}</button>
@@ -48,7 +56,7 @@ import AdminUsers from './components/AdminUsers.vue';
 import PendingApproval from './components/PendingApproval.vue';
 import ChatShell from './components/ChatShell.vue';
 import Notifications from './components/Notifications.vue';
-import { whoami, logout } from './api.js';
+import { whoami, logout, switchOrg } from './api.js';
 import { enableWebPush } from './pwa.js';
 import { bindBackState } from './useBackStack.js';
 
@@ -112,6 +120,15 @@ function onLoggedIn() {
   refresh();
 }
 
+// Cambiar de organización activa → reemite token y recarga (refetch por org).
+const orgSwitching = ref(false);
+async function onSwitchOrg(orgId) {
+  if (!orgId || orgId === user.value?.org_id || orgSwitching.value) return;
+  orgSwitching.value = true;
+  try { await switchOrg(orgId); window.location.reload(); }
+  catch (e) { orgSwitching.value = false; flashNotif('No se pudo cambiar de organización.'); }
+}
+
 function onLogout() {
   logout();
   user.value = null;
@@ -146,6 +163,9 @@ onMounted(refresh);
 .header-left  { display: flex; align-items: center; }
 .header-center { display: flex; align-items: center; justify-content: center; }
 .header-right { display: flex; align-items: center; justify-content: flex-end; }
+.org-switch { border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff; border-radius: 14px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer; max-width: 200px; }
+.org-switch option { color: #1e293b; }
+.org-chip { font-size: 0.8rem; font-weight: 600; opacity: .9; white-space: nowrap; }
 .notif-optin { border: 1px solid #facc15; background: #fef9c3; color: #854d0e; border-radius: 16px; padding: 4px 12px; font-weight: 700; font-size: 0.82rem; cursor: pointer; white-space: nowrap; }
 .notif-optin:hover { background: #fde68a; }
 .notif-toast {

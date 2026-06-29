@@ -209,6 +209,16 @@ export async function whoami() {
   return call('/api/auth/me', { method: 'GET' });
 }
 
+// Multi-tenancy: organizaciones del usuario + cambio de org activa.
+export async function listOrgs() {
+  return call('/api/orgs', { method: 'GET' });
+}
+export async function switchOrg(orgId) {
+  const res = await call('/api/orgs/switch', { method: 'POST', body: JSON.stringify({ org_id: orgId }) });
+  if (res?.token) localStorage.setItem('cepi.jwt', res.token);  // nueva org activa
+  return res;
+}
+
 // List patients (entity_definition 11000000-…) for the WhatsApp-style chat list.
 // PII is redacted server-side per the caller's role.
 export async function listPatients({ limit = 500 } = {}) {
