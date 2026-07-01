@@ -96,7 +96,9 @@ rol: `primario derma1 derma2 residente super admin`):
   `curl http://localhost:8899` (o `scripts/browser-bot/drive.sh …`).
 - Idempotente: si el bot ya corre, no relanza. Reiniciar:
   `pkill -f browser-bot/bot.cjs && ./lanzar-bots.sh`.
-- Datos de prueba multi-org: tras `reset-cepi.sh --with-fake-data`, la mayoría de
-  los usuarios demo viven solo en `cepi-testing`; solo `primario` está además en
-  `cepi` (2 orgs → probar el switch del topbar). Ver
-  `medical-seed/007_telemedicine.sql`.
+- Datos de prueba multi-org: los usuarios demo viven en **ambas** orgs
+  (`cepi` + `cepi-testing`) — así la derivación funciona sin importar en qué org
+  caiga el caso (el revisor debe pertenecer a la org del caso) y el switch del
+  topbar sigue siendo probable. El auto-registro asigna las orgs por defecto vía
+  `assignDefaultOrgs` (`REGISTER_DEFAULT_ORG_SLUGS`, default `cepi,cepi-testing`).
+  Ver `medical-seed/007_telemedicine.sql`.
