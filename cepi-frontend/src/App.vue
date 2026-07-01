@@ -29,6 +29,7 @@
             <option v-for="o in user.orgs" :key="o.id" :value="o.id">🏥 {{ o.name }}</option>
           </select>
           <span v-else-if="user.orgs && user.orgs.length === 1" class="org-chip" title="Organización">🏥 {{ user.orgs[0].name }}</span>
+          <button v-if="canInstall" class="install-btn" @click="installApp" title="Instalar la app en tu dispositivo">📲 Instalar app</button>
           <button v-if="showNotifOptin && !isPending" class="notif-optin" @click="enableNotifs(); showTopMenu = false" title="Activar notificaciones push">🔔 Activar</button>
           <button v-if="!isPending && !showProfile" @click="openProfile">👤 Perfil</button>
           <button v-if="isAdmin && !showAdmin" @click="showAdmin = true; showProfile = false; showTopMenu = false">Admin</button>
@@ -129,6 +130,31 @@ async function enableNotifs() {
   notifPerm.value = typeof Notification !== 'undefined' ? Notification.permission : 'denied';
   flashNotif(msg);
 }
+
+// ── PWA: instalar la app (Add to Home Screen) ───────────────────────────────
+// El navegador emite 'beforeinstallprompt' cuando la PWA es instalable; lo
+// guardamos para dispararlo desde el botón. En iOS no existe ese evento → se
+// muestra igual y se dan las instrucciones manuales.
+const deferredInstall = ref(null);
+const canInstall = computed(() => !isStandalone && (!!deferredInstall.value || isIosDevice));
+// Registrar temprano (en setup, no en onMounted) para no perder el evento, que
+// el navegador puede emitir apenas carga la página.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall.value = e; });
+  window.addEventListener('appinstalled', () => { deferredInstall.value = null; flashNotif('App instalada ✔'); });
+}
+async function installApp() {
+  showTopMenu.value = false;
+  if (deferredInstall.value) {
+    deferredInstall.value.prompt();
+    try { await deferredInstall.value.userChoice; } catch { /* usuario canceló */ }
+    deferredInstall.value = null;
+    return;
+  }
+  if (isIosDevice) {
+    flashNotif('En iPhone/iPad: toca Compartir → "Añadir a pantalla de inicio" para instalar la app.');
+  }
+}
 // Lightweight view routing (no vue-router): a ?verify=<token> link lands on the
 // verification view; otherwise the login/register toggle is shown.
 const _params = new URLSearchParams(window.location.search);
@@ -214,6 +240,8 @@ onMounted(refresh);
 .admin-tabs { display: flex; gap: 8px; padding: 12px 16px 0; }
 .admin-tabs button { border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 8px 8px 0 0; padding: 8px 16px; font-weight: 600; cursor: pointer; }
 .admin-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.install-btn { border: 1px solid #34d399; background: #d1fae5; color: #065f46; border-radius: 16px; padding: 4px 12px; font-weight: 700; font-size: 0.82rem; cursor: pointer; white-space: nowrap; }
+.install-btn:hover { background: #a7f3d0; }
 .notif-optin { border: 1px solid #facc15; background: #fef9c3; color: #854d0e; border-radius: 16px; padding: 4px 12px; font-weight: 700; font-size: 0.82rem; cursor: pointer; white-space: nowrap; }
 .notif-optin:hover { background: #fde68a; }
 .notif-toast {
