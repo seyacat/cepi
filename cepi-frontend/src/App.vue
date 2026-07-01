@@ -179,6 +179,9 @@ async function refresh() {
   if (!localStorage.getItem('cepi.jwt')) { authed.value = false; return; }
   try {
     const r = await whoami();
+    // Conservar/renovar el token en cada carga (sesión deslizante): así el
+    // refresco NO fuerza un re-login y no se golpea el rate-limit de /login.
+    if (r?.token) localStorage.setItem('cepi.jwt', r.token);
     user.value = r?.user || null;
     authed.value = !!user.value;
   } catch {

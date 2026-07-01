@@ -1,7 +1,7 @@
 /* CEPI service worker — offline shell + Web Push (TELEMEDICINA.md §6C).
  * Dependency-free. Bump CACHE to invalidate the shell. */
-const CACHE = 'cepi-shell-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+const CACHE = 'cepi-shell-v3';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -55,8 +55,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'CEPI';
   event.waitUntil(self.registration.showNotification(title, {
     body: data.body || '',
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
     tag: data.reminder_id || data.entity_id || undefined,
     data: { url: '/', entity_id: data.entity_id || null },
   }));
