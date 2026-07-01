@@ -14,7 +14,12 @@
         <strong class="brand">Telemedicina</strong>
       </div>
       <div class="header-right">
-        <span v-if="user" class="user">
+        <Notifications v-if="user && !isPending" :user="user" @open="onNotifOpen" />
+        <button
+          v-if="user && (showAdmin || showProfile || !chatHeadActive)" type="button" class="top-burger"
+          @click="showTopMenu = !showTopMenu" aria-label="Opciones" :aria-expanded="showTopMenu"
+        >☰</button>
+        <span v-if="user" class="user" :class="{ open: showTopMenu }">
           <span class="user-id">{{ user.email }} · {{ user.role }}</span>
           <select
             v-if="user.orgs && user.orgs.length > 1"
@@ -24,10 +29,10 @@
             <option v-for="o in user.orgs" :key="o.id" :value="o.id">🏥 {{ o.name }}</option>
           </select>
           <span v-else-if="user.orgs && user.orgs.length === 1" class="org-chip" title="Organización">🏥 {{ user.orgs[0].name }}</span>
-          <Notifications v-if="!isPending" />
-          <button v-if="showNotifOptin && !isPending" class="notif-optin" @click="enableNotifs" title="Activar notificaciones push">🔔 Activar</button>
-          <button v-if="isAdmin" @click="showAdmin = !showAdmin">{{ showAdmin ? 'Chat' : 'Admin' }}</button>
-          <button @click="onLogout">Salir</button>
+          <button v-if="showNotifOptin && !isPending" class="notif-optin" @click="enableNotifs(); showTopMenu = false" title="Activar notificaciones push">🔔 Activar</button>
+          <button v-if="!isPending && !showProfile" @click="openProfile">👤 Perfil</button>
+          <button v-if="isAdmin && !showAdmin" @click="showAdmin = true; showProfile = false; showTopMenu = false">Admin</button>
+          <button v-if="showAdmin || showProfile" @click="goChat">Volver</button>
         </span>
       </div>
     </header>
@@ -47,7 +52,8 @@
           <AdminOrgs v-if="adminTab === 'orgs'" />
           <AdminUsers v-else />
         </div>
-        <ChatShell v-else :user="user" />
+        <Profile v-else-if="showProfile" :user="user" @back="goChat" @saved="onProfileSaved" @logout="onLogout" />
+        <ChatShell v-else ref="chatShellRef" :user="user" @head="chatHeadActive = $event" />
       </template>
     </main>
     </template>
@@ -55,11 +61,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted } from 'vue';
 import Login from './components/Login.vue';
 import Register from './components/Register.vue';
 import VerifyEmail from './components/VerifyEmail.vue';
 import AdminUsers from './components/AdminUsers.vue';
+import Profile from './components/Profile.vue';
 import AdminOrgs from './components/AdminOrgs.vue';
 import PendingApproval from './components/PendingApproval.vue';
 import ChatShell from './components/ChatShell.vue';
@@ -71,6 +78,34 @@ import { bindBackState } from './useBackStack.js';
 const user = ref(null);
 const authed = ref(false);
 const showAdmin = ref(false);
+const showProfile = ref(false);          // vista "Mi perfil"
+const showTopMenu = ref(false);          // burger de acciones del topbar (mobile)
+const chatHeadActive = ref(false);       // el chat muestra su propio burger (paciente abierto)
+const chatShellRef = ref(null);          // para abrir un paciente desde una notificación
+// Si el chat toma el header, cierra el menú del topbar (su burger desaparece).
+watch(chatHeadActive, (v) => { if (v) showTopMenu.value = false; });
+
+function openProfile() {
+  showProfile.value = true;
+  showAdmin.value = false;
+  showTopMenu.value = false;
+}
+// "Volver" siempre lleva al chat (cierra Admin/Perfil y el menú).
+function goChat() {
+  showAdmin.value = false;
+  showProfile.value = false;
+  showTopMenu.value = false;
+}
+function onProfileSaved(u) {
+  // El perfil devolvió el user actualizado (nombre/teléfono/cédula) → refrescar.
+  if (u) user.value = { ...user.value, ...u };
+}
+// Click en una notificación → ir al chat y abrir el paciente que la origina.
+async function onNotifOpen({ id, name }) {
+  goChat();                              // asegura que ChatShell esté montado
+  await nextTick();
+  chatShellRef.value?.openPatientById(id, name);
+}
 const adminTab = ref('users');
 const isAdmin = computed(() => !!user.value?.permissions?.includes('*:*:*:*'));
 const isPending = computed(() => authed.value && user.value?.role === 'pendiente');
@@ -171,7 +206,7 @@ onMounted(refresh);
 }
 .header-left  { display: flex; align-items: center; }
 .header-center { display: flex; align-items: center; justify-content: center; }
-.header-right { display: flex; align-items: center; justify-content: flex-end; }
+.header-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .org-switch { border: 1px solid rgba(255,255,255,.55); background: rgba(255,255,255,.15); color: #fff; border-radius: 14px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer; max-width: 200px; }
 .org-switch option { color: #1e293b; }
 .org-chip { font-size: 0.8rem; font-weight: 600; opacity: .9; white-space: nowrap; }
@@ -194,6 +229,13 @@ onMounted(refresh);
   display: flex; gap: 10px; align-items: center;
   font-size: 0.82rem; color: #fff;
 }
+/* Burger de acciones del topbar — solo móvil. */
+.top-burger {
+  display: none; flex-shrink: 0;
+  border: 1.5px solid rgba(255,255,255,.45); background: rgba(255,255,255,.18); color: #fff;
+  border-radius: 8px; width: 34px; height: 32px; font-size: 1.05rem; line-height: 1; cursor: pointer;
+}
+.top-burger:hover { background: rgba(255,255,255,.3); }
 .user-id { opacity: 0.92; }
 .topbar .user button {
   background: rgba(255,255,255,0.18);
@@ -223,5 +265,26 @@ main {
   .topbar { padding: 0 0.75rem; }
   .user-id { display: none; }
   main { padding: 0; }
+
+  /* Las acciones del topbar pasan a un menú desplegable (burger). */
+  .header-right { position: relative; }
+  .top-burger { display: inline-flex; align-items: center; justify-content: center; }
+  .topbar .user {
+    display: none;
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 90;
+    flex-direction: column; align-items: stretch; gap: 6px;
+    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0,0,0,.28); padding: 8px; min-width: 210px; max-width: 84vw;
+  }
+  .topbar .user.open { display: flex; }
+  /* Controles del menú: texto oscuro sobre blanco (ya no la banda del header). */
+  .topbar .user .org-switch,
+  .topbar .user button {
+    color: var(--text); background: #fff; border: 1px solid var(--border);
+    border-radius: 8px; text-align: left; width: 100%; max-width: none; padding: 8px 10px; font-weight: 600;
+  }
+  .topbar .user .org-switch option { color: var(--text); }
+  .topbar .user button:hover { background: var(--bg); border-color: var(--border); }
+  .topbar .user .org-chip { color: var(--text-muted); }
 }
 </style>

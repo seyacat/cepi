@@ -62,6 +62,7 @@ const assignments = ref({});   // { patientId: { assignee_name, source, ... } } 
 // Icono + tooltip según cómo quedó "a cargo" el responsable.
 function acargoMeta(p) {
   const a = assignments.value[p.id] || {};
+  if (a.source === 'derivado_grupo') return { icon: '👥', title: 'Derivado al círculo (pendiente de revisión)' };
   if (a.source === 'derivado') return { icon: '↪️', title: 'Derivado a (pendiente de revisión)' };
   if (a.source === 'creador') return { icon: '👤', title: 'Médico que creó el caso' };
   return { icon: '🩺', title: 'Responsable del caso' };

@@ -97,6 +97,13 @@ export async function adminSetUserGroups(id, slugs) {
   });
 }
 
+export async function adminSetUserOrgs(id, orgIds) {
+  return call(`/api/admin/users/${encodeURIComponent(id)}/orgs`, {
+    method: 'PUT',
+    body: JSON.stringify({ org_ids: orgIds }),
+  });
+}
+
 // ── Notificaciones (recordatorios del usuario) ──────────────────────────────
 // Backed by TodoERP /api/reminders. Clinical roles have `reminders:read_own`,
 // so this returns only the caller's own reminders (derivaciones recibidas,
@@ -105,6 +112,9 @@ export async function listReminders(params = {}) {
   const q = new URLSearchParams();
   if (params.status) q.set('status', params.status);
   if (params.entity_id) q.set('entity_id', params.entity_id);
+  // La campana es personal: aunque el rol tenga reminders:read_all, se limita al
+  // dueño para no ver notificaciones de otros.
+  if (params.owner_user_id) q.set('owner_user_id', params.owner_user_id);
   const qs = q.toString();
   return call(`/api/reminders${qs ? '?' + qs : ''}`, { method: 'GET' });
 }
@@ -113,6 +123,12 @@ export async function listReminders(params = {}) {
 // surface "to review" patients at the top of the list.
 export async function getReviewQueue() {
   return call('/api/review-queue', { method: 'GET' });
+}
+
+// Resuelve la entidad de un recordatorio (episodio/paciente) → { patient_id,
+// patient_name } para abrir su chat al hacer click en la notificación.
+export async function resolveReminderPatient(entityId) {
+  return call(`/api/review-queue/patient/${encodeURIComponent(entityId)}`, { method: 'GET' });
 }
 
 // Quién tiene "a cargo" a cada paciente (responsable del episodio más reciente).
@@ -207,6 +223,14 @@ export function initOfflineQueue() {
 
 export async function whoami() {
   return call('/api/auth/me', { method: 'GET' });
+}
+
+// El usuario edita su propio perfil (nombre, teléfono, cédula, contraseña).
+// Devuelve { token, user } con el token reemitido (el nombre viaja en el JWT).
+export async function updateProfile(patch) {
+  const res = await call('/api/auth/me', { method: 'PATCH', body: JSON.stringify(patch) });
+  if (res?.token) localStorage.setItem('cepi.jwt', res.token);
+  return res;
 }
 
 // Multi-tenancy: organizaciones del usuario + cambio de org activa.

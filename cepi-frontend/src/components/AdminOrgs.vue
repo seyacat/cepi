@@ -42,7 +42,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { listOrgs, createOrg, updateOrg, listOrgMembers, addOrgMember, removeOrgMember, listUsers } from '../api.js';
+import { listOrgs, createOrg, updateOrg, listOrgMembers, addOrgMember, removeOrgMember, adminListUsers } from '../api.js';
 
 const orgs = ref([]);
 const isSuper = ref(false);
@@ -65,10 +65,10 @@ async function load() {
 }
 async function loadUsers() {
   try {
-    const r = await listUsers();
-    users.value = (r?.data || []).map(u => ({
+    const r = await adminListUsers('');   // tabla users real (todos), no la security polimórfica
+    users.value = (r?.users || []).map(u => ({
       id: u.id,
-      label: (u.name || u.data?.name || '') + ' · ' + (u.email || u.data?.email || ''),
+      label: (u.name || '') + ' · ' + (u.email || ''),
     }));
   } catch { users.value = []; }
 }

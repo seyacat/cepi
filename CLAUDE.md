@@ -81,3 +81,22 @@ bash scripts/dev-chat.sh --new "/help"
 # Backup
 bash scripts/backup-db.sh
 ```
+
+## Bots de testing (browser-bot multi-perfil)
+
+Para probar la app desde 6 roles a la vez (una ventana Chrome auto-logueada por
+rol: `primario derma1 derma2 residente super admin`):
+
+```bash
+./lanzar-bots.sh          # arranca las 6 ventanas + API en :8899 (idempotente)
+```
+
+- **El usuario** corre `./lanzar-bots.sh` en su sesión gráfica — el agente NO
+  puede lanzar Chrome desde el sandbox, pero SÍ maneja las ventanas por
+  `curl http://localhost:8899` (o `scripts/browser-bot/drive.sh …`).
+- Idempotente: si el bot ya corre, no relanza. Reiniciar:
+  `pkill -f browser-bot/bot.cjs && ./lanzar-bots.sh`.
+- Datos de prueba multi-org: tras `reset-cepi.sh --with-fake-data`, la mayoría de
+  los usuarios demo viven solo en `cepi-testing`; solo `primario` está además en
+  `cepi` (2 orgs → probar el switch del topbar). Ver
+  `medical-seed/007_telemedicine.sql`.

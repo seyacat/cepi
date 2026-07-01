@@ -6,19 +6,25 @@
         <option value="pendiente">Pendientes</option>
         <option value="">Todos</option>
       </select>
+      <input
+        v-model="search"
+        class="search"
+        type="search"
+        placeholder="Buscar nombre, cédula o rol…"
+      />
       <button class="refresh" @click="loadUsers" :disabled="busy" title="Refrescar">↻</button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="ok" class="ok">{{ ok }}</p>
 
-    <div class="table-wrap" v-if="rows.length">
+    <div class="table-wrap" v-if="filteredRows.length">
       <table>
         <thead>
-          <tr><th>Nombre</th><th>Email</th><th>Tel/Cédula</th><th>Rol</th><th>Círculos</th><th>Activo</th><th></th></tr>
+          <tr><th>Nombre</th><th>Email</th><th>Tel/Cédula</th><th>Rol</th><th>Organizaciones</th><th>Círculos</th><th>Activo</th><th></th></tr>
         </thead>
         <tbody>
-          <tr v-for="u in rows" :key="u.id">
+          <tr v-for="u in filteredRows" :key="u.id">
             <td>{{ u.name }}</td>
             <td class="email">{{ u.email }}<span v-if="u.email_verified === 'true'" title="email verificado"> ✅</span></td>
             <td class="muted">{{ u.phone || '—' }} / {{ u.cedula || '—' }}</td>
@@ -26,6 +32,20 @@
               <select v-model="u.role_id">
                 <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
               </select>
+            </td>
+            <td class="circles-cell">
+              <div class="chips" v-if="orgs.length">
+                <button
+                  v-for="o in orgs"
+                  :key="o.id"
+                  type="button"
+                  class="chip org"
+                  :class="{ on: u.orgs.includes(o.id) }"
+                  :title="o.name"
+                  @click="toggleOrg(u, o.id)"
+                >{{ u.orgs.includes(o.id) ? '✓ ' : '' }}{{ o.name }}</button>
+              </div>
+              <span v-else class="muted">—</span>
             </td>
             <td class="circles-cell">
               <div class="chips" v-if="circles.length">
@@ -47,19 +67,31 @@
         </tbody>
       </table>
     </div>
+    <p v-else-if="!busy && rows.length" class="muted">Ningún usuario coincide con «{{ search }}».</p>
     <p v-else-if="!busy" class="muted">No hay usuarios{{ filter ? ' con ese filtro' : '' }}.</p>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-import { adminListUsers, adminListRoles, adminUpdateUser, adminSetUserGroups, listGroups } from '../api.js';
+import { ref, computed, onMounted } from 'vue';
+import { adminListUsers, adminListRoles, adminUpdateUser, adminSetUserGroups, adminSetUserOrgs, listGroups, listOrgs } from '../api.js';
 
 const rows = ref([]);
 const roles = ref([]);
 const circles = ref([]);
+const orgs = ref([]);
 const filter = ref('pendiente');
+const search = ref('');
 const busy = ref(false);
+
+// Filtro local sobre las filas ya cargadas: nombre, cédula o rol.
+const filteredRows = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return rows.value;
+  return rows.value.filter(u =>
+    [u.name, u.cedula, u.role].some(v => (v || '').toLowerCase().includes(q))
+  );
+});
 const error = ref('');
 const ok = ref('');
 
@@ -79,6 +111,13 @@ async function loadCircles() {
   } catch (e) { error.value = e.message || String(e); }
 }
 
+async function loadOrgs() {
+  try {
+    const r = await listOrgs();
+    orgs.value = r?.orgs || [];
+  } catch (e) { error.value = e.message || String(e); }
+}
+
 async function loadUsers() {
   busy.value = true; error.value = ''; ok.value = '';
   try {
@@ -87,6 +126,7 @@ async function loadUsers() {
       ...x,
       active: !!x.active,
       circles: Array.isArray(x.circle_slugs) ? [...x.circle_slugs] : [],
+      orgs: Array.isArray(x.org_ids) ? [...x.org_ids] : [],
     }));
   } catch (e) {
     error.value = e.message || String(e);
@@ -101,11 +141,18 @@ function toggleCircle(u, slug) {
   else u.circles.push(slug);
 }
 
+function toggleOrg(u, orgId) {
+  const i = u.orgs.indexOf(orgId);
+  if (i >= 0) u.orgs.splice(i, 1);
+  else u.orgs.push(orgId);
+}
+
 async function save(u) {
   u._saving = true; error.value = ''; ok.value = '';
   try {
     await adminUpdateUser(u.id, { role_id: u.role_id, active: u.active });
     await adminSetUserGroups(u.id, u.circles);
+    await adminSetUserOrgs(u.id, u.orgs);
     ok.value = `Guardado: ${u.email}`;
   } catch (e) {
     error.value = e.message || String(e);
@@ -114,13 +161,14 @@ async function save(u) {
   }
 }
 
-onMounted(async () => { await Promise.all([loadRoles(), loadCircles()]); await loadUsers(); });
+onMounted(async () => { await Promise.all([loadRoles(), loadCircles(), loadOrgs()]); await loadUsers(); });
 </script>
 
 <style scoped>
-.admin { max-width: 880px; margin: 14px auto; padding: 0 12px; color: var(--text); height: 100%; overflow: auto; }
+.admin { width: 100%; max-width: none; margin: 14px 0; padding: 0 16px; color: var(--text); height: 100%; overflow: auto; }
 .bar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
 .bar h2 { margin: 0; color: var(--accent); flex: 1; font-size: 1.1rem; }
+.search { padding: 5px 9px; min-width: 200px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
 .refresh { padding: 5px 10px; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -142,4 +190,6 @@ button[disabled] { opacity: .6; cursor: not-allowed; }
 }
 .chip:hover { border-color: var(--accent); color: var(--accent); }
 .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chip.org.on { background: #0e7490; border-color: #0e7490; }
+.chip.org:hover { border-color: #0e7490; color: #0e7490; }
 </style>

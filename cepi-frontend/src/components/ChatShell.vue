@@ -8,20 +8,26 @@
       @general="onGeneral"
     />
     <div class="shell-detail">
-      <IntakeChat ref="chatRef" :user="user" class="shell-chat" @closed="onChatClosed" @back="view = 'list'" />
+      <IntakeChat ref="chatRef" :user="user" class="shell-chat" @closed="onChatClosed" @back="view = 'list'" @head="patientActive = $event" />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import ChatList from './ChatList.vue';
 import IntakeChat from './IntakeChat.vue';
 import { bindBackState } from '../useBackStack.js';
 
 defineProps({ user: Object });
+const emit = defineEmits(['head']);
 
 const view = ref('list');          // mobile only: 'list' | 'chat' (desktop shows both)
+const patientActive = ref(false);  // IntakeChat tiene un paciente abierto (header + su burger)
+// El burger del chat solo es VISIBLE con paciente abierto y en la vista de chat.
+// Al volver a la lista (view='list') esto cae a false y el topbar recupera su burger.
+const headActive = computed(() => patientActive.value && view.value === 'chat');
+watch(headActive, (v) => emit('head', v), { immediate: true });
 const selectedId = ref(null);
 const selectedName = ref('');
 const generalActive = ref(false);
@@ -59,6 +65,16 @@ function onChatClosed() {
   generalActive.value = false;
   if (isMobile.value) view.value = 'list';
 }
+
+// Abrir un paciente por id (p.ej. desde una notificación del topbar).
+function openPatientById(id, name) {
+  selectedId.value = id;
+  selectedName.value = name || '';
+  generalActive.value = false;
+  chatRef.value?.openPatient(id, name || 'Paciente');
+  if (isMobile.value) view.value = 'chat';
+}
+defineExpose({ openPatientById });
 
 // Device/browser Back: while in the mobile chat view, go back to the list
 // instead of leaving the app.

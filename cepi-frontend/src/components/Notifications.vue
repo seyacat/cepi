@@ -27,21 +27,25 @@
           v-for="n in items"
           :key="n.id"
           class="notif-item"
-          :class="['st-' + n.status, { done: n.status === 'done' }]"
+          :class="['st-' + n.status, { done: n.status === 'done', clickable: !!n.entity_id }]"
+          :role="n.entity_id ? 'button' : null"
+          :title="n.entity_id ? 'Abrir el chat del paciente' : ''"
+          @click="openReminder(n)"
         >
           <div class="ni-top">
-            <span class="ni-title">{{ n.title }}</span>
+            <span class="ni-title">{{ n.patient_name || n.title }}</span>
             <span class="ni-status" :title="'estado: ' + n.status">{{ statusLabel(n.status) }}</span>
           </div>
+          <p v-if="n.created_by_name" class="ni-sub">↪️ Derivó: {{ n.created_by_name }}</p>
           <p v-if="n.message" class="ni-msg">{{ n.message }}</p>
           <div class="ni-foot">
-            <span class="ni-due">{{ fmtDue(n.due_at) }}</span>
+            <span class="ni-due">{{ n._opening ? 'Abriendo…' : fmtDue(n.due_at) }}</span>
             <button
               v-if="n.status !== 'done' && n.status !== 'cancelled'"
               type="button"
               class="ni-done"
               :disabled="n._busy"
-              @click="markDone(n)"
+              @click.stop="markDone(n)"
             >{{ n._busy ? '…' : '✓ Visto' }}</button>
           </div>
         </li>
@@ -52,8 +56,10 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { listReminders, completeReminder } from '../api.js';
+import { listReminders, completeReminder, resolveReminderPatient } from '../api.js';
 
+const props = defineProps({ user: { type: Object, default: null } });
+const emit = defineEmits(['open']);
 const open = ref(false);
 const items = ref([]);
 const busy = ref(false);
@@ -85,10 +91,21 @@ async function load() {
   busy.value = true;
   error.value = '';
   try {
-    const r = await listReminders();
+    // Personal: solo los recordatorios del propio usuario (aunque el rol pueda leer todos).
+    const r = await listReminders({ owner_user_id: props.user?.id });
     const rows = Array.isArray(r?.data) ? r.data : [];
-    // Newest first; keep _busy flag stable across reloads is unnecessary here.
     items.value = rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Enriquecer con el nombre del paciente (resuelve la entidad → episodio → paciente).
+    const uniq = [...new Set(items.value.map(n => n.entity_id).filter(Boolean))];
+    const map = {};
+    await Promise.all(uniq.map(async eid => {
+      try { const rr = await resolveReminderPatient(eid); if (rr?.patient_id) map[eid] = rr; } catch { /* ignore */ }
+    }));
+    items.value = items.value.map(n => ({
+      ...n,
+      patient_id: n.entity_id ? (map[n.entity_id]?.patient_id || null) : null,
+      patient_name: n.entity_id ? (map[n.entity_id]?.patient_name || null) : null,
+    }));
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
@@ -99,6 +116,32 @@ async function load() {
 function toggle() {
   open.value = !open.value;
   if (open.value) load();
+}
+
+// Click en una notificación → abre el chat del paciente que la origina.
+// Resuelve la entidad del recordatorio (episodio → paciente) en el backend.
+async function openReminder(n) {
+  if (!n.entity_id || n._opening) return;
+  // Usa el paciente ya resuelto en load(); si no, lo resuelve al vuelo.
+  if (n.patient_id) {
+    open.value = false;
+    emit('open', { id: n.patient_id, name: n.patient_name || n.title || 'Paciente' });
+    return;
+  }
+  n._opening = true;
+  try {
+    const r = await resolveReminderPatient(n.entity_id);
+    if (r?.patient_id) {
+      open.value = false;
+      emit('open', { id: r.patient_id, name: r.patient_name || n.title || 'Paciente' });
+    } else {
+      error.value = 'No se encontró el paciente de esta notificación.';
+    }
+  } catch (e) {
+    error.value = e.message || String(e);
+  } finally {
+    n._opening = false;
+  }
 }
 
 async function markDone(n) {
@@ -172,6 +215,8 @@ defineExpose({ refresh: load });
 .notif-muted { color: var(--text-muted); font-size: 0.86rem; padding: 16px 14px; text-align: center; }
 .notif-list { list-style: none; margin: 0; padding: 0; }
 .notif-item { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.notif-item.clickable { cursor: pointer; }
+.notif-item.clickable:hover { background: var(--bg); }
 .notif-item.done { opacity: 0.55; }
 .ni-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .ni-title { font-weight: 700; font-size: 0.86rem; color: var(--text); }
@@ -182,6 +227,7 @@ defineExpose({ refresh: load });
 .st-pending .ni-status { background: #fef9c3; color: #854d0e; border-color: #fde047; }
 .st-sent .ni-status { background: #dcfce7; color: #166534; border-color: #86efac; }
 .st-failed .ni-status { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.ni-sub { margin: 3px 0 0; font-size: 0.78rem; color: var(--accent); font-weight: 600; }
 .ni-msg { margin: 4px 0 0; font-size: 0.82rem; color: var(--text-muted); white-space: pre-wrap; word-break: break-word; }
 .ni-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
 .ni-due { font-size: 0.72rem; color: var(--text-muted); }

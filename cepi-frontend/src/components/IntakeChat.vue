@@ -1,6 +1,6 @@
 <template>
   <div class="ichat">
-    <div v-if="patientName" class="ihead">
+    <div v-if="patientName" class="ihead" ref="iheadEl">
       <button type="button" class="ihead-back" @click="$emit('back')" title="Volver a la lista" aria-label="Volver">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
       </button>
@@ -152,13 +152,13 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers, listBotSessions, getPatientThread } from '../api.js';
 import MessageContent from './MessageContent.vue';
 import BotForm from './BotForm.vue';
 
 defineProps({ user: Object });
-const emit = defineEmits(['closed', 'back']);
+const emit = defineEmits(['closed', 'back', 'head']);
 
 const draft = ref('');
 const busy = ref(false);
@@ -169,6 +169,9 @@ const pending = ref(null);
 const quickReplies = ref([]);            // botones de respuesta rápida que devuelve el bot
 const pendingAttachment = ref(null);
 const patientName = ref('');
+// Avisar arriba cuando el header del chat (con su burger) está activo, para que
+// el topbar oculte SU burger y solo se vea uno a la vez.
+watch(patientName, (v) => emit('head', !!v), { immediate: true });
 const feedEl = ref(null);
 const taEl = ref(null);
 
@@ -180,9 +183,23 @@ const showSections = ref(false);         // dropdown de secciones
 // Auto-form ON: el bot muestra el form del siguiente campo faltante tras abrir y
 // tras cada guardado (sigue preguntando). OFF: solo muestra el form pedido en
 // "Secciones", sin auto-avanzar al siguiente.
-const autoForm = ref(localStorage.getItem('cepi.autoform') === '1');   // OFF por defecto
-function toggleAutoForm() { autoForm.value = !autoForm.value; localStorage.setItem('cepi.autoform', autoForm.value ? '1' : '0'); }
+// Auto-form es intrínseco de ESTE chat (paciente): se guarda por paciente, no
+// se propaga a otros. OFF por defecto.
+const autoForm = ref(false);
+function autoformKey() { return 'cepi.autoform.' + (currentPatientId.value || 'general'); }
+function loadAutoForm() { autoForm.value = localStorage.getItem(autoformKey()) === '1'; }
+function toggleAutoForm() {
+  autoForm.value = !autoForm.value;
+  localStorage.setItem(autoformKey(), autoForm.value ? '1' : '0');
+  showMenu.value = false;                                   // cerrar el menú al accionar
+  if (autoForm.value) {
+    // Auto ON → disparar enseguida la siguiente sección pendiente de la ficha.
+    const next = bookmarks.value.find(b => !b.done);
+    if (next && !busy.value && isActiveEpisode.value) openBookmark(next);
+  }
+}
 const showMenu = ref(false);             // burger de acciones (mobile)
+const iheadEl = ref(null);               // header del chat (para cerrar el menú por blur)
 const showFicha = ref(false);            // modal del visor de ficha
 const fichaEpisodes = ref([]);
 const fichaIndex = ref(0);
@@ -234,11 +251,23 @@ const episodeIndex = computed(() => {
   const i = episodeOrder.value.indexOf(currentEpisodeId.value);
   return i >= 0 ? i : episodeOrder.value.length - 1;   // por defecto, el más nuevo
 });
+// El ack de activación del bot ("Paciente activo: … Continuamos la consulta … 📋
+// Faltan N secciones…") es puramente informativo y el bot lo re-emite en CADA
+// activación/reanudación, por lo que se acumula en el hilo. Mostrarlo una sola
+// vez: dejamos únicamente la última aparición y filtramos las anteriores.
+// (Solo este mensaje — el resto de los turnos del bot se muestran tal cual.)
+function isActivationAck(m) {
+  return !!m.is_bot && /^Paciente activo:/.test((m.content || '').trimStart());
+}
 const visibleMessages = computed(() => {
   const ord = episodeOrder.value;
-  if (ord.length <= 1) return messages.value;
-  const cur = ord[episodeIndex.value];
-  return messages.value.filter(m => (m.episode_id || null) === cur);
+  let list = ord.length <= 1
+    ? messages.value
+    : messages.value.filter(m => (m.episode_id || null) === ord[episodeIndex.value]);
+  let lastAck = -1;
+  for (let k = 0; k < list.length; k++) if (isActivationAck(list[k])) lastAck = k;
+  if (lastAck !== -1) list = list.filter((m, k) => k === lastAck || !isActivationAck(m));
+  return list;
 });
 const isActiveEpisode = computed(() => {
   const ord = episodeOrder.value;
@@ -600,6 +629,7 @@ async function openPatient(uuid, name) {
   reset();
   patientName.value = name || '';
   currentPatientId.value = uuid;
+  loadAutoForm();                          // estado auto-form propio de este paciente
   busy.value = true;
   try {
     const sid = await findMyOpenSession(uuid);
@@ -620,7 +650,19 @@ async function openPatient(uuid, name) {
 function newGeneral() {
   reset();
   patientName.value = '';
+  loadAutoForm();                          // chat general → su propio estado
 }
+
+// Cerrar el menú (burger) del chat al hacer click fuera del header.
+function onDocClick(ev) {
+  if (!showMenu.value && !showSections.value) return;
+  if (iheadEl.value && !iheadEl.value.contains(ev.target)) {
+    showMenu.value = false;
+    showSections.value = false;
+  }
+}
+onMounted(() => document.addEventListener('click', onDocClick));
+onUnmounted(() => document.removeEventListener('click', onDocClick));
 defineExpose({ openPatient, newGeneral });
 </script>
 
