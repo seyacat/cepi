@@ -49,8 +49,12 @@ export async function register({ name, email, password, phone, cedula }) {
   });
 }
 
-export async function verifyEmail(token) {
-  return call(`/api/auth/verify-email?token=${encodeURIComponent(token)}`, { method: 'GET' });
+export async function verifyEmail(email, code) {
+  return call('/api/auth/verify-email', { method: 'POST', body: JSON.stringify({ email, code }) });
+}
+
+export async function resendVerifyCode(email) {
+  return call('/api/auth/resend-code', { method: 'POST', body: JSON.stringify({ email }) });
 }
 
 export async function googleLogin(credential) {

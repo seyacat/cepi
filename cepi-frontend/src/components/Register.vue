@@ -1,7 +1,7 @@
 <template>
   <form class="card" @submit.prevent="submit">
     <h2>Crear cuenta</h2>
-    <template v-if="!done">
+    <template>
       <label>Nombre completo
         <input v-model.trim="name" type="text" autocomplete="name" required />
       </label>
@@ -20,10 +20,6 @@
       <button type="submit" :disabled="busy">{{ busy ? 'Creando…' : 'Crear cuenta' }}</button>
       <p v-if="error" class="error">{{ error }}</p>
     </template>
-    <p v-else class="ok">
-      ✅ ¡Listo! Te enviamos un correo de verificación a <b>{{ email }}</b>.
-      Revisá tu bandeja (y la carpeta de spam) y hacé click en el enlace para activar tu cuenta.
-    </p>
     <p class="hint">
       <a href="#" @click.prevent="$emit('go-login')">← Volver a ingresar</a>
     </p>
@@ -34,7 +30,7 @@
 import { ref } from 'vue';
 import { register } from '../api.js';
 
-defineEmits(['go-login']);
+const emit = defineEmits(['go-login', 'registered']);
 
 const name = ref('');
 const email = ref('');
@@ -43,7 +39,6 @@ const cedula = ref('');
 const password = ref('');
 const busy = ref(false);
 const error = ref('');
-const done = ref(false);
 
 async function submit() {
   busy.value = true;
@@ -56,7 +51,8 @@ async function submit() {
       phone: phone.value,
       cedula: cedula.value,
     });
-    done.value = true;
+    // → pantalla de código (sin links en el email)
+    emit('registered', email.value.trim().toLowerCase());
   } catch (e) {
     error.value = e.message || String(e);
   } finally {

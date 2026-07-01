@@ -39,9 +39,9 @@
     </header>
     <div v-if="notifMsg" class="notif-toast" @click="notifMsg = ''">{{ notifMsg }}</div>
     <main>
-      <VerifyEmail v-if="view === 'verify'" :token="verifyToken" @done="goLogin" />
+      <VerifyEmail v-if="view === 'verify'" :email="verifyEmailAddr" @done="goLogin" />
       <template v-else-if="!authed">
-        <Register v-if="view === 'register'" @go-login="view = 'login'" />
+        <Register v-if="view === 'register'" @go-login="view = 'login'" @registered="onRegistered" />
         <Login v-else @logged-in="onLoggedIn" @go-register="view = 'register'" />
       </template>
       <template v-else>
@@ -155,22 +155,24 @@ async function installApp() {
     flashNotif('En iPhone/iPad: toca Compartir → "Añadir a pantalla de inicio" para instalar la app.');
   }
 }
-// Lightweight view routing (no vue-router): a ?verify=<token> link lands on the
-// verification view; otherwise the login/register toggle is shown.
-const _params = new URLSearchParams(window.location.search);
-const verifyToken = ref(_params.get('verify') || '');
-const view = ref(verifyToken.value ? 'verify' : 'login');
+// Ruteo liviano (sin vue-router). La verificación es por CÓDIGO (no por link):
+// tras registrarse se pasa a la vista 'verify' con el email.
+const verifyEmailAddr = ref('');
+const view = ref('login');
 
+function onRegistered(email) {
+  verifyEmailAddr.value = email;
+  view.value = 'verify';
+}
 function goLogin() {
-  verifyToken.value = '';
+  verifyEmailAddr.value = '';
   view.value = 'login';
-  try { history.replaceState({}, '', '/'); } catch { /* */ }
 }
 
 // Device/browser Back navigates within the app (register/verify/admin) instead
 // of leaving the page. The chat list↔detail Back is handled inside ChatShell.
 bindBackState(() => view.value === 'register', () => { view.value = 'login'; });
-bindBackState(() => view.value === 'verify', () => { goLogin(); }, { immediate: true });
+bindBackState(() => view.value === 'verify', () => { goLogin(); });
 bindBackState(() => showAdmin.value, () => { showAdmin.value = false; });
 // Tema claro fijo por ahora (se quitó el toggle de modo oscuro).
 document.documentElement.dataset.theme = 'light';
