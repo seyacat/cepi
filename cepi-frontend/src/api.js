@@ -37,6 +37,8 @@ export async function login(email, password) {
 export function logout() {
   localStorage.removeItem('cepi.jwt');
   localStorage.removeItem('cepi.session_id');
+  // Aviso para que la capa nativa desregistre el push (device-token).
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('cepi:logout'));
   // Future: hit a /api/bot/logout to mark bot_session.estado = 'cerrada'.
 }
 

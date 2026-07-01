@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
+import { fileURLToPath, URL } from 'node:url';
 
 // Frontend talks to three backends, all proxied so the browser (and the
 // ngrok tunnel) sees a single same-origin app:
@@ -12,6 +13,13 @@ import vue from '@vitejs/plugin-vue';
 // without nginx.
 export default defineConfig({
   plugins: [vue()],
+  resolve: {
+    alias: {
+      // El web-impl de @capacitor-firebase/messaging arrastra el firebase JS SDK;
+      // lo stubeamos (nunca se ejecuta — ver src/native/push.js).
+      'firebase/messaging': fileURLToPath(new URL('./src/native/firebase-messaging-web-stub.js', import.meta.url)),
+    },
+  },
   server: {
     port: 5174,
     // Allow the ngrok dev domain to reach the Vite server (Vite blocks

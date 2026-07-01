@@ -7,13 +7,26 @@
   "scripts": {
     "dev": "vite --port 5174 --host",
     "build": "vite build",
-    "preview": "vite preview --port 5174"
+    "preview": "vite preview --port 5174",
+    "assets": "capacitor-assets generate",
+    "cap:sync": "vite build && cap sync",
+    "android:apk": "vite build && cap sync android && cd android && ./gradlew assembleDebug",
+    "android:aab": "vite build && cap sync android && cd android && ./gradlew bundleRelease",
+    "ios:sync": "vite build && cap sync ios"
   },
   "dependencies": {
+    "@capacitor-firebase/messaging": "^8.3.0",
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capgo/capacitor-updater": "^8.50.1",
     "@rollup/rollup-linux-x64-gnu": "^4.60.4",
     "vue": "^3.4.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.4.1",
     "@vitejs/plugin-vue": "^5.0.0",
     "vite": "^5.4.0"
   }

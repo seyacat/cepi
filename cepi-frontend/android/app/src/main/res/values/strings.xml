@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CEPI Telemedicina</string>
+    <string name="title_activity_main">CEPI Telemedicina</string>
+    <string name="package_name">ec.cepi.telemedicina</string>
+    <string name="custom_url_scheme">ec.cepi.telemedicina</string>
+</resources>
