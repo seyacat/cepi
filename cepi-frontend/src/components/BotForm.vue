@@ -50,7 +50,7 @@
         <EntitySearchField :field="f" :busy="busy" @select="$emit('send', $event)" />
       </div>
 
-      <!-- ICD-11 (OMS) diagnosis autocomplete. -->
+      <!-- CIE-10 diagnosis autocomplete (local). -->
       <div v-else-if="f.type === 'icd_search'" class="bot-form-field">
         <label>{{ f.label }}<span v-if="f.required" class="bf-req">*</span></label>
         <IcdSearchField :field="f" :busy="busy" v-model="values[f.key]" />

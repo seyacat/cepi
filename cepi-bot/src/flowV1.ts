@@ -235,7 +235,7 @@ const FICHA_FIELD_DEFS: FichaFieldDef[] = [
   ] as BotFormField[]).map(field => ({ category: 'Examen físico', target: 'episode' as const, field })),
   // §5 Diagnóstico (episodio)
   ...([
-  { key: 'diagnostico', label: 'Diagnóstico (ICD-11 OMS)', type: 'icd_search' },
+  { key: 'diagnostico', label: 'Diagnóstico (CIE-10)', type: 'icd_search' },
   { key: 'diagnostico_letra', label: 'Semáforo A/B/C', type: 'radio', options: ['A', 'B', 'C'] },
   ] as BotFormField[]).map(field => ({ category: 'Diagnóstico', target: 'episode' as const, field })),
   // §6 Estudios (episodio)

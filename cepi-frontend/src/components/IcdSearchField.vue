@@ -4,13 +4,13 @@
       type="text"
       :value="modelValue"
       :disabled="busy"
-      :placeholder="field.placeholder || 'Buscar diagnóstico en ICD-11 (OMS)…'"
+      :placeholder="field.placeholder || 'Buscar diagnóstico en CIE-10…'"
       autocomplete="off"
       @input="onInput"
       @focus="open = results.length > 0"
     />
     <div v-if="open" class="icdf-drop">
-      <div v-if="loading" class="icdf-msg">Buscando en ICD-11…</div>
+      <div v-if="loading" class="icdf-msg">Buscando en CIE-10…</div>
       <template v-else>
         <button
           v-for="(r, i) in results"
@@ -52,7 +52,9 @@ function onInput(e) {
   debounceT = setTimeout(async () => {
     const seq = ++reqSeq;
     try {
-      const res = await fetch('/api/bot/icd/search?q=' + encodeURIComponent(q.trim()));
+      const jwt = (typeof localStorage !== 'undefined' && localStorage.getItem('cepi.jwt')) || '';
+      const res = await fetch('/api/icd10/search?q=' + encodeURIComponent(q.trim()),
+        jwt ? { headers: { Authorization: `Bearer ${jwt}` } } : {});
       const body = await res.json();
       if (seq !== reqSeq) return;            // a newer query superseded this
       results.value = (body && body.results) || [];
