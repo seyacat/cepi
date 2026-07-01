@@ -43,11 +43,9 @@ async function submit() {
     await verifyEmail(props.email, code.value);
     okMsg.value = '✅ ¡Cuenta verificada! Redirigiendo…';
     setTimeout(() => emit('done'), 1200);
-  } catch (e) {
-    const msg = e?.message || '';
-    error.value = /expired/.test(msg) ? 'El código venció. Pedí uno nuevo.'
-      : /too_many/.test(msg) ? 'Demasiados intentos. Pedí un código nuevo.'
-      : 'Código incorrecto. Revisá e intentá de nuevo.';
+  } catch {
+    // Respuesta genérica del backend (anti-enumeración): un solo mensaje.
+    error.value = 'Código incorrecto o vencido. Si no funciona, pedí uno nuevo.';
   } finally {
     busy.value = false;
   }
