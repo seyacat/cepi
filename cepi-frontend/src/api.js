@@ -57,6 +57,17 @@ export async function resendVerifyCode(email) {
   return call('/api/auth/resend-code', { method: 'POST', body: JSON.stringify({ email }) });
 }
 
+// --- DoctoPro (repositorio de consulta externo) -------------------------------
+export async function doctoproStatus() {
+  return call('/api/doctopro/status', { method: 'GET' });
+}
+export async function searchDoctoProPatients(q) {
+  return call(`/api/doctopro/pacientes?q=${encodeURIComponent(q)}`, { method: 'GET' });
+}
+export async function getDoctoProPatient(id) {
+  return call(`/api/doctopro/pacientes/${encodeURIComponent(id)}`, { method: 'GET' });
+}
+
 export async function googleLogin(credential) {
   const res = await call('/api/auth/google', {
     method: 'POST',

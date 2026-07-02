@@ -23,6 +23,7 @@
         <button type="button" :disabled="busy || !currentPatientId" @click="openFicha" title="Ver la ficha clínica completa">👁️ Ficha</button>
         <button type="button" :disabled="busy" @click="openDerivar" title="Derivar el episodio a un círculo o a una persona">↪️ Derivar</button>
         <button type="button" :disabled="busy" @click="nuevaConsulta" title="Abrir una consulta nueva (el episodio anterior queda en el historial)">＋ Nueva consulta</button>
+        <button type="button" @click="showDoctoPro = true" title="Consultar pacientes en DoctoPro">🔎 DoctoPro</button>
       </div>
     </div>
 
@@ -148,6 +149,8 @@
         <iframe :key="fichaIndex" ref="fichaFrame" class="ficha-frame" src="/ficha.html" @load="onFichaLoad"></iframe>
       </div>
     </div>
+
+    <DoctoProSearch v-if="showDoctoPro" @close="showDoctoPro = false" />
   </div>
 </template>
 
@@ -156,6 +159,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers, listBotSessions, getPatientThread } from '../api.js';
 import MessageContent from './MessageContent.vue';
 import BotForm from './BotForm.vue';
+import DoctoProSearch from './DoctoProSearch.vue';
 
 defineProps({ user: Object });
 const emit = defineEmits(['closed', 'back', 'head']);
@@ -201,6 +205,7 @@ function toggleAutoForm() {
 const showMenu = ref(false);             // burger de acciones (mobile)
 const iheadEl = ref(null);               // header del chat (para cerrar el menú por blur)
 const showFicha = ref(false);            // modal del visor de ficha
+const showDoctoPro = ref(false);         // modal de consulta DoctoPro
 const fichaEpisodes = ref([]);
 const fichaIndex = ref(0);
 const fichaFrame = ref(null);
