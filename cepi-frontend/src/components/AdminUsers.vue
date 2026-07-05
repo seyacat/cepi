@@ -13,6 +13,12 @@
         placeholder="Buscar nombre, cédula o rol…"
       />
       <button class="refresh" @click="loadUsers" :disabled="busy" title="Refrescar">↻</button>
+      <button
+        class="save-all"
+        @click="saveAll"
+        :disabled="busy || !dirtyCount"
+        :title="dirtyCount ? `Guardar ${dirtyCount} usuario(s) editado(s)` : 'Sin cambios por guardar'"
+      >💾 Guardar cambios<span v-if="dirtyCount"> ({{ dirtyCount }})</span></button>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -24,7 +30,7 @@
           <tr><th>Nombre</th><th>Email</th><th>Tel/Cédula</th><th>Rol</th><th>Organizaciones</th><th>Círculos</th><th>Activo</th><th></th></tr>
         </thead>
         <tbody>
-          <tr v-for="u in filteredRows" :key="u.id">
+          <tr v-for="u in filteredRows" :key="u.id" :class="{ dirty: isDirty(u) }">
             <td>{{ u.name }}</td>
             <td class="email">{{ u.email }}<span v-if="u.email_verified === 'true'" title="email verificado"> ✅</span></td>
             <td class="muted">{{ u.phone || '—' }} / {{ u.cedula || '—' }}</td>
@@ -62,7 +68,7 @@
               <span v-else class="muted">—</span>
             </td>
             <td class="center"><input type="checkbox" v-model="u.active" /></td>
-            <td><button @click="save(u)" :disabled="u._saving">{{ u._saving ? '…' : 'Guardar' }}</button></td>
+            <td class="center"><span v-if="isDirty(u)" class="dirty-dot" title="Cambios sin guardar">●</span></td>
           </tr>
         </tbody>
       </table>
@@ -122,12 +128,16 @@ async function loadUsers() {
   busy.value = true; error.value = ''; ok.value = '';
   try {
     const u = await adminListUsers(filter.value);
-    rows.value = (u?.users || []).map(x => ({
-      ...x,
-      active: !!x.active,
-      circles: Array.isArray(x.circle_slugs) ? [...x.circle_slugs] : [],
-      orgs: Array.isArray(x.org_ids) ? [...x.org_ids] : [],
-    }));
+    rows.value = (u?.users || []).map(x => {
+      const row = {
+        ...x,
+        active: !!x.active,
+        circles: Array.isArray(x.circle_slugs) ? [...x.circle_slugs] : [],
+        orgs: Array.isArray(x.org_ids) ? [...x.org_ids] : [],
+      };
+      row._orig = snapshot(row);   // estado base para detectar cambios
+      return row;
+    });
   } catch (e) {
     error.value = e.message || String(e);
   } finally {
@@ -147,18 +157,40 @@ function toggleOrg(u, orgId) {
   else u.orgs.push(orgId);
 }
 
-async function save(u) {
-  u._saving = true; error.value = ''; ok.value = '';
-  try {
-    await adminUpdateUser(u.id, { role_id: u.role_id, active: u.active });
-    await adminSetUserGroups(u.id, u.circles);
-    await adminSetUserOrgs(u.id, u.orgs);
-    ok.value = `Guardado: ${u.email}`;
-  } catch (e) {
-    error.value = e.message || String(e);
-  } finally {
-    u._saving = false;
+// Snapshot del estado guardado, para comparar y detectar filas modificadas.
+function snapshot(u) {
+  return { role_id: u.role_id, active: !!u.active, circles: [...u.circles].sort(), orgs: [...u.orgs].sort() };
+}
+function sameArr(a, b) {
+  const x = [...a].sort(); return x.length === b.length && x.every((v, i) => v === b[i]);
+}
+function isDirty(u) {
+  const o = u._orig;
+  if (!o) return false;
+  return u.role_id !== o.role_id || !!u.active !== o.active || !sameArr(u.circles, o.circles) || !sameArr(u.orgs, o.orgs);
+}
+const dirtyCount = computed(() => rows.value.filter(isDirty).length);
+
+// Guardado GLOBAL: persiste de una sola vez todos los usuarios modificados.
+async function saveAll() {
+  const dirty = rows.value.filter(isDirty);
+  if (!dirty.length || busy.value) return;
+  busy.value = true; error.value = ''; ok.value = '';
+  let saved = 0; const fails = [];
+  for (const u of dirty) {
+    try {
+      await adminUpdateUser(u.id, { role_id: u.role_id, active: u.active });
+      await adminSetUserGroups(u.id, u.circles);
+      await adminSetUserOrgs(u.id, u.orgs);
+      u._orig = snapshot(u);   // ya quedó guardado → nuevo estado base
+      saved++;
+    } catch (e) {
+      fails.push(u.email || u.name || u.id);
+    }
   }
+  busy.value = false;
+  if (fails.length) error.value = `No se pudieron guardar: ${fails.join(', ')}`;
+  if (saved) ok.value = `Guardado${saved > 1 ? 's' : ''} ${saved} usuario${saved > 1 ? 's' : ''}.`;
 }
 
 onMounted(async () => { await Promise.all([loadRoles(), loadCircles(), loadOrgs()]); await loadUsers(); });
@@ -180,6 +212,10 @@ td.center { text-align: center; }
 select { padding: 5px 7px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
 button { padding: 5px 12px; background: var(--accent); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; }
 button[disabled] { opacity: .6; cursor: not-allowed; }
+.save-all { background: #16a34a; white-space: nowrap; }
+.save-all[disabled] { background: var(--accent); }
+tr.dirty { background: rgba(22,163,74,.08); }
+.dirty-dot { color: #f59e0b; font-size: 13px; }
 .error { color: #dc2626; font-size: 13px; }
 .ok { color: #16a34a; font-size: 13px; }
 .circles-cell { min-width: 180px; }
