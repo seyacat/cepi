@@ -72,20 +72,42 @@
       <button type="button" @click="pendingAttachment = null">quitar</button>
     </p>
 
+    <!-- Composer en dos filas: el textarea ocupa todo el ancho y las acciones van
+         debajo. En fila única los 3 botones le comían el ancho al texto. -->
     <form v-if="isActiveEpisode" class="icomposer" @submit.prevent="onSubmit">
-      <label class="iupload" :class="{ disabled: busy || uploading }" title="Adjuntar imagen">
-        📎<input type="file" accept="image/*" :disabled="busy || uploading" @change="onFile" />
-      </label>
       <textarea
         ref="taEl"
         v-model="draft"
         rows="1"
-        placeholder="Escribe o pega un texto largo…"
+        :placeholder="dictating ? 'Escuchando… habla y toca el micrófono para parar' : 'Escribe, dicta o pega un texto largo…'"
         @keydown="onKey"
       ></textarea>
-      <button type="submit" :disabled="busy || (!draft.trim() && !pendingAttachment)">
-        {{ uploading ? '…' : 'Enviar' }}
-      </button>
+      <div class="icomposer-actions">
+        <label class="iupload" :class="{ disabled: busy || uploading }" title="Adjuntar imagen">
+          📎<input type="file" accept="image/*" :disabled="busy || uploading" @change="onFile" />
+        </label>
+        <button
+          v-if="canDictate"
+          type="button"
+          class="imic"
+          :class="{ on: dictating }"
+          :disabled="busy"
+          :title="dictating ? 'Detener dictado' : 'Dictar'"
+          @click="toggleDictation"
+        >{{ dictating ? '⏹ Parar' : '🎤 Dictar' }}</button>
+        <button
+          v-if="canDictate"
+          type="button"
+          class="iauto"
+          :class="{ on: autoSend }"
+          :aria-pressed="autoSend"
+          :title="autoSend ? 'Envío automático activo: al terminar de hablar, el mensaje se envía solo' : 'Envío automático apagado: el dictado queda en el cuadro para revisarlo'"
+          @click="toggleAutoSend"
+        >⚡</button>
+        <button type="submit" :disabled="busy || (!draft.trim() && !pendingAttachment)">
+          {{ uploading ? '…' : 'Enviar' }}
+        </button>
+      </div>
     </form>
     <div v-else class="icomposer-ro">
       <span>Consulta anterior — solo lectura.</span>
@@ -160,6 +182,7 @@ import { chat, saveSessionId, uploadAttachment, listGroups, listGroupMembers, li
 import MessageContent from './MessageContent.vue';
 import BotForm from './BotForm.vue';
 import DoctoProSearch from './DoctoProSearch.vue';
+import { createDictation, dictationSupported } from '../native/speech.js';
 
 defineProps({ user: Object });
 const emit = defineEmits(['closed', 'back', 'head']);
@@ -178,6 +201,92 @@ const patientName = ref('');
 watch(patientName, (v) => emit('head', !!v), { immediate: true });
 const feedEl = ref(null);
 const taEl = ref(null);
+
+// ── Composer: el textarea crece con el texto en vez de scrollear ────────────
+// `rows=1` fija la altura y el navegador mete scroll interno; acá la altura se
+// recalcula contra scrollHeight en cada cambio. El tope lo pone max-height del
+// CSS: pasado ese punto sí scrollea, si no el composer se comería el chat.
+function autosize() {
+  const ta = taEl.value;
+  if (!ta) return;
+  ta.style.height = 'auto';                 // sin esto nunca puede encoger
+  ta.style.height = ta.scrollHeight + 'px';
+}
+watch(draft, () => nextTick(autosize));
+
+// ── Dictado (STT) ───────────────────────────────────────────────────────────
+// El texto dictado entra al mismo textarea que el tecleo: de ahí sigue por el
+// pipeline normal (bot → extracción → form de la ficha). El médico ve lo que se
+// transcribió y lo corrige antes de enviar.
+const canDictate = dictationSupported;
+const dictating = ref(false);
+let session = null;
+let dictBase = '';        // lo que había escrito antes de abrir el micrófono
+
+// Envío automático: al cerrar el dictado, el texto sale solo. Se apoya en el
+// modo NO continuo, donde el reconocedor cierra al detectar el fin de la frase
+// — así hablás y el mensaje se manda sin tocar nada. Preferencia por dispositivo.
+const AUTOSEND_KEY = 'cepi.stt.autosend';
+const autoSend = ref(localStorage.getItem(AUTOSEND_KEY) === '1');
+function toggleAutoSend() {
+  autoSend.value = !autoSend.value;
+  localStorage.setItem(AUTOSEND_KEY, autoSend.value ? '1' : '0');
+}
+
+function endDictation() {
+  dictating.value = false;
+  if (session) { session.dispose(); session = null; }
+}
+
+// Manos libres: si el dictado se envió solo, volver a escuchar cuando el bot
+// termina de contestar. Se re-arma únicamente tras un envío por voz — escribir a
+// mano no enciende el micrófono. Y si el dictado sale vacío no hay envío, así que
+// tampoco hay respuesta ni re-armado: el ciclo se corta solo.
+let reArm = false;
+let manualStop = false;   // el usuario tocó ⏹: no enviar solo ni reencadenar
+watch(busy, (isBusy, wasBusy) => {
+  if (!(wasBusy && !isBusy)) return;      // solo en el flanco "terminó de responder"
+  if (!reArm) return;
+  reArm = false;
+  if (!autoSend.value || dictating.value || error.value || !isActiveEpisode.value) return;
+  toggleDictation();
+});
+
+async function toggleDictation() {
+  if (dictating.value) {
+    // ⏹ es la salida de emergencia del modo manos libres: corta la escucha, deja
+    // el texto para revisar y NO reencadena. Sin esto, con ⚡ encendido el ciclo
+    // dictar→enviar→escuchar no se podría interrumpir desde el propio botón.
+    manualStop = true;
+    await session?.stop();
+    return;
+  }
+
+  error.value = '';
+  manualStop = false;
+  dictBase = draft.value.trim();
+  dictating.value = true;
+  const withAutoSend = autoSend.value;   // fijado al arrancar: que el toggle no cambie a mitad
+
+  session = createDictation({
+    // onPartial trae SIEMPRE el acumulado de la sesión, no un delta: por eso se
+    // reemplaza la cola en vez de concatenar (si no, el texto se duplica).
+    onPartial: (text) => { draft.value = (dictBase ? dictBase + ' ' : '') + text; },
+    onFinal:   (text) => {
+      draft.value = ((dictBase ? dictBase + ' ' : '') + text).trim();
+      if (withAutoSend && draft.value && !manualStop) { reArm = true; nextTick(onSubmit); }
+    },
+    onEnd:     endDictation,
+    onError:   (e) => { error.value = e.message; endDictation(); },
+  }, { continuous: !withAutoSend });
+
+  try {
+    await session.start();
+  } catch (e) {
+    error.value = e?.message || 'No se pudo iniciar el dictado.';
+    endDictation();
+  }
+}
 
 // ── Ficha: secciones (bookmarks) + form inline + visor ──────────────────────
 const botForm = ref(null);               // form de la sección abierta (BotForm) o null
@@ -553,6 +662,12 @@ function onKey(ev) {
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); onSubmit(); }
 }
 function onSubmit() {
+  if (dictating.value) session?.stop();     // enviar cierra el dictado en curso
+  // Android compone mientras escribís (autocorrección, deslizamiento) y Vue
+  // ignora los `input` con `composing=true`, así que `draft` puede ir atrasado
+  // respecto de lo que se ve. El blur cierra la composición; leemos el DOM.
+  const ta = taEl.value;
+  if (ta) { ta.blur(); if (ta.value !== draft.value) draft.value = ta.value; }
   const t = draft.value.trim();
   let payload = t;
   if (pendingAttachment.value) {
@@ -667,7 +782,12 @@ function onDocClick(ev) {
   }
 }
 onMounted(() => document.addEventListener('click', onDocClick));
-onUnmounted(() => document.removeEventListener('click', onDocClick));
+onUnmounted(() => {
+  document.removeEventListener('click', onDocClick);
+  // Dejar el micrófono abierto al salir del chat es un bug de batería y de
+  // privacidad, además de bloquear el recognizer para la próxima sesión.
+  if (session) { session.stop(); session.dispose(); session = null; }
+});
 defineExpose({ openPatient, newGeneral });
 </script>
 
@@ -896,13 +1016,37 @@ defineExpose({ openPatient, newGeneral });
 .ierror { color: #dc2626; font-size: 13px; }
 .iattached { flex-shrink: 0; margin: 0; padding: 6px 14px; font-size: 13px; color: #3730a3; background: #eef2ff; border-top: 1px solid #c7d2fe; }
 .iattached button { background: none; border: 0; color: #6366f1; text-decoration: underline; cursor: pointer; }
-.icomposer { flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--bg); }
+.icomposer { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--bg); }
+.icomposer-actions { display: flex; gap: 8px; align-items: center; }
+/* Enviar a la derecha, adjuntar y dictar a la izquierda. */
+.icomposer-actions button[type="submit"] { margin-left: auto; }
 .icomposer textarea {
-  flex: 1; resize: none; max-height: 160px; min-height: 40px;
+  /* El alto lo maneja autosize() por JS; max-height es el tope a partir del
+     cual sí scrollea, para que el composer no se coma el feed. */
+  flex: 1; resize: none; max-height: 40vh; min-height: 40px;
+  overflow-y: auto;
   padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 20px;
-  font-size: 0.95rem; font-family: inherit; background: #fff; color: #212121; outline: none;
+  font-size: 0.95rem; line-height: 1.35; font-family: inherit;
+  background: #fff; color: #212121; outline: none;
 }
 .icomposer textarea:focus { border-color: var(--accent); }
+.imic {
+  flex-shrink: 0; height: 40px; padding: 0 .9rem;
+  border: 1.5px solid var(--border); border-radius: 20px;
+  background: #fff; color: #212121; font-size: .9rem; font-weight: 600;
+  line-height: 1; cursor: pointer;
+}
+.imic:disabled { opacity: .55; cursor: not-allowed; }
+.iauto {
+  flex-shrink: 0; width: 40px; height: 40px; padding: 0;
+  border: 1.5px solid var(--border); border-radius: 50%;
+  background: #fff; font-size: 1rem; line-height: 1; cursor: pointer;
+  filter: grayscale(1); opacity: .55;
+}
+.iauto.on { filter: none; opacity: 1; border-color: #f59e0b; background: #fef3c7; }
+.imic.on { border-color: #dc2626; background: #fee2e2; animation: imic-pulse 1.2s ease-in-out infinite; }
+@keyframes imic-pulse { 50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, .18); } }
+@media (prefers-reduced-motion: reduce) { .imic.on { animation: none; } }
 .iupload { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; border: 1.5px solid var(--border); border-radius: 50%; background: #fff; cursor: pointer; }
 .iupload input { display: none; }
 .iupload.disabled { opacity: .5; cursor: not-allowed; }

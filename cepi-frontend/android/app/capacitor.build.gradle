@@ -12,6 +12,8 @@ dependencies {
     implementation project(':capacitor-firebase-messaging')
     implementation project(':capacitor-app')
     implementation project(':capacitor-splash-screen')
+    implementation project(':capgo-capacitor-social-login')
+    implementation project(':capgo-capacitor-speech-recognition')
     implementation project(':capgo-capacitor-updater')
 
 }

@@ -32,4 +32,14 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- RECORD_AUDIO lo aporta el manifest del plugin de speech-recognition (merge). -->
+
+    <!-- Android 11+ (API 30) filtra la visibilidad de paquetes: sin este <queries>
+         el SpeechRecognizer no "ve" al motor de reconocimiento instalado y
+         available() devuelve false aunque el motor exista. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 </manifest>
