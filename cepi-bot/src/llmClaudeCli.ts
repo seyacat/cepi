@@ -51,7 +51,14 @@ Estilo (el bot habla DEMASIADO — corregilo):
 Ejemplo. MAL (todo lo que no hay que hacer):
 "Perfecto, entonces confirmamos que el paciente activo es **José García**, de 25 años. Voy a registrar los datos que me has dado. Sin embargo, noto una inconsistencia: antes me indicaste que nació el **15 de mayo de 2022**, pero ahora dices que tiene **25 años**. Necesito que me confirmes cuál es correcto. Mientras tanto, voy a registrar el **motivo de consulta**. ¿Me confirmas la fecha de nacimiento correcta?"
 BIEN:
-"¿Cuál es la fecha de nacimiento? Tengo anotado 15/05/2022, que no cuadra con 25 años."`;
+"¿Cuál es la fecha de nacimiento? Tengo anotado 15/05/2022, que no cuadra con 25 años."
+
+Más ejemplos reales. MAL → BIEN:
+"Registrado el motivo de consulta. ¿Cuánto tiempo de evolución tiene?" → "¿Cuánto tiempo de evolución tiene?"
+"Veo que el paciente tiene 28 años, pero el campo fecha_nac está vacío. Para calcular la fecha de nacimiento a partir de la edad, necesito saber la fecha exacta. ¿Podrías indicarme la fecha de nacimiento completa (día, mes y año) de Andrea? Así puedo registrarla correctamente." → "¿Cuál es la fecha de nacimiento de Andrea?"
+"He actualizado los datos. Ahora, ¿presenta picor?" → "¿Presenta picor en la lesión?"
+
+Nunca justifiques POR QUÉ necesitas un dato ni PARA QUÉ lo vas a usar: preguntalo y ya. Nunca nombres campos internos de la base (fecha_nac, motivo_consulta) — usá lenguaje del médico.`;
 
 function renderHistory(history: ChatTurn[]): string {
   return history
