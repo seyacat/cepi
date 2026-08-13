@@ -30,6 +30,7 @@ import {
   FICHA_GROUPS,
 } from './flowV1.js';
 import { icdSearch } from './icdWho.js';
+import { extractPendingQuestions, pendingQuestionsNote } from './pendingQuestions.js';
 import { listEpisodeImagesWithClassifications, CLINICAL_IMAGE_ENTITY_ID, HAM_TO_ICD } from './episodeImages.js';
 import { startWhatsapp } from './whatsapp.js';
 import { startTelegram } from './telegram.js';
@@ -1750,7 +1751,10 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
       const stateNote: ChatTurn = {
         role: 'system',
         content: `Contexto activo: paciente=${activePatientId ?? '(ninguno)'}, episodio=${activeEpisodeId ?? '(ninguno)'}. ` +
-                 `Comandos: "activar paciente <uuid>", "salir paciente", "activar episodio <uuid>", "salir episodio".`,
+                 `Comandos: "activar paciente <uuid>", "salir paciente", "activar episodio <uuid>", "salir episodio".` +
+                 // Las dudas que quedaron en cola de turnos anteriores, para que
+                 // el agente las retome de a una en vez de perderlas.
+                 (session.pending_slots?.length ? ' ' + pendingQuestionsNote(session.pending_slots) : ''),
       };
       inputHistory = [...session.turns, stateNote, { role: 'user', content: message }];
     } else if (Array.isArray(history)) {
@@ -1761,11 +1765,27 @@ const chatHandler = async (req: Request, res: Response, next: NextFunction) => {
 
     const out = await runAgentTurn({ jwt, apiKey, history: inputHistory, mcp });
 
+    // El agente adjunta las dudas que deja en cola en un marcador al final del
+    // mensaje. Se saca ANTES de responder y de persistir: el usuario no debe
+    // verlo, ni acá ni al releer el hilo.
+    const queued = extractPendingQuestions(out.text);
+    if (queued.questions !== null) {
+      out.text = queued.text;
+      const lastIdx = out.history.map(t => t.role).lastIndexOf('assistant');
+      if (lastIdx >= 0) {
+        out.history = out.history.map((t, i) =>
+          i === lastIdx ? { ...t, content: extractPendingQuestions(t.content).text } : t);
+      }
+    }
+
     if (sessionId && mcp) {
       const session = await loadSession(mcp, sessionId);
       if (session) {
         // Don't persist the synthetic system note — strip it before saving.
         session.turns = out.history.filter(t => t.role !== 'system');
+        // Sin marcador se conserva la cola anterior: el agente pudo haber hecho
+        // solo una tool call, y perderla ahí lo haría olvidar lo que faltaba.
+        if (queued.questions !== null) session.pending_slots = queued.questions;
         session.tool_calls = [
           ...session.tool_calls,
           ...out.toolCalls.map(tc => ({
