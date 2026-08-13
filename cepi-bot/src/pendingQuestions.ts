@@ -44,6 +44,9 @@ export function pendingQuestionsNote(questions: string[]): string {
   return (
     `Dudas pendientes de turnos anteriores: ${questions.join(' | ')}. ` +
     `Retoma SOLO la siguiente que siga sin responder, de a una. ` +
-    `Quita de la lista lo que el usuario ya respondió y lo que dejó de aplicar.`
+    `Quita de la lista lo que el usuario ya respondió y lo que dejó de aplicar. ` +
+    // Sin esto el agente resuelve la duda, guarda, y cierra el mensaje sin
+    // preguntar nada — la conversación se queda muerta con la cola llena.
+    `Aunque acabes de guardar un dato, tu mensaje DEBE terminar preguntando la siguiente.`
   );
 }
