@@ -78,14 +78,28 @@ describe('runAgentTurn', () => {
     expect(mcp.calls.length).toBe(0);
   });
 
-  it('caps tool calls at 5 per turn', async () => {
+  it('no repite la misma llamada con los mismos argumentos', async () => {
     const mcp = new FakeMcp(toolList, new Map([['auth.whoami', {}]]));
     const llm = new ScriptedLLM(
       Array.from({ length: 10 }, () => ({ kind: 'tool_call', tool: { name: 'auth.whoami', args: {} } }))
     );
     const out = await runAgentTurn({ history: baseHistory, mcp: mcp as any, llm, jwt: 'x' });
+    // El modelo pidió la misma tool 10 veces; al MCP llega UNA sola.
+    expect(mcp.calls.length).toBe(1);
+    expect(out.text).toBeTruthy();
+  });
+
+  it('corta a las 5 vueltas aunque las llamadas sean distintas', async () => {
+    const mcp = new FakeMcp(toolList, new Map([['auth.whoami', {}]]));
+    const llm = new ScriptedLLM(
+      // Args distintos en cada vuelta: la deduplicación no aplica, manda el tope.
+      Array.from({ length: 10 }, (_, i) => ({ kind: 'tool_call', tool: { name: 'auth.whoami', args: { n: i } } }))
+    );
+    const out = await runAgentTurn({ history: baseHistory, mcp: mcp as any, llm, jwt: 'x' });
     expect(mcp.calls.length).toBe(5);
-    expect(out.text).toMatch(/límite/i);
+    // Al usuario no se le habla del tope interno.
+    expect(out.text).not.toMatch(/límite|tool/i);
+    expect(out.text).toMatch(/repites/i);
   });
 
   it('forwards tool errors back into history', async () => {

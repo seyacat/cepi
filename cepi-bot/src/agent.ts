@@ -60,6 +60,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutp
 
     let history: ChatTurn[] = [...input.history];
     const toolCalls: AgentTurnOutput['toolCalls'] = [];
+    const calledSignatures = new Set<string>();   // detecta llamadas repetidas
 
     for (let i = 0; i < MAX_TOOL_CALLS_PER_TURN; i++) {
       // PAPER §13.3.1: redact PII from tool results BEFORE the LLM sees the
@@ -94,7 +95,29 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutp
           && args && typeof (args as any).data === 'object' && (args as any).data) {
         callArgs = { ...(args as any), data: coercePatch((args as any).data) };
       }
+
+      // Corta el bucle más caro: el modelo repitiendo la MISMA llamada con los
+      // mismos argumentos porque el resultado no le gustó. Sin esto quema las 5
+      // vueltas y el turno muere sin respuesta. En vez de volver a llamar, se le
+      // devuelve el aviso como resultado para que cierre con texto.
+      const sig = `${toolName}:${JSON.stringify(callArgs)}`;
+      if (calledSignatures.has(sig)) {
+        console.warn(`[agent] llamada repetida a ${toolName}, cortando el bucle`);
+        history = [...history, {
+          role: 'tool',
+          tool_name: toolName,
+          content: JSON.stringify({
+            error: 'Ya llamaste esta herramienta con los mismos argumentos en este turno. ' +
+                   'No la repitas: responde al usuario con texto.',
+          }),
+        }];
+        continue;
+      }
+      calledSignatures.add(sig);
+
       const result = await mcp.call(toolName, callArgs);
+      // Solo el nombre y el resultado: los args llevan PII.
+      console.log(`[agent] tool ${i + 1}/${MAX_TOOL_CALLS_PER_TURN}: ${toolName} → ${result.ok ? 'ok' : 'error'}`);
       toolCalls.push({ name: toolName, args: callArgs, result });
       const rawJson = JSON.stringify(result.ok ? result.data : { error: result.error });
       history = [
@@ -108,8 +131,11 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnOutp
       // Loop: feed the tool result back to the LLM for the next decision.
     }
 
-    // Hit the cap. Return whatever we have.
-    const text = `Se alcanzó el límite de ${MAX_TOOL_CALLS_PER_TURN} llamadas a tools en este turno.`;
+    // Se agotaron las vueltas sin que el modelo produjera texto. Al médico se le
+    // habla en su idioma, no del límite interno; el detalle va al log.
+    console.warn(`[agent] tope de ${MAX_TOOL_CALLS_PER_TURN} tools agotado sin respuesta. ` +
+                 `Secuencia: ${toolCalls.map(t => t.name).join(' → ') || '(ninguna)'}`);
+    const text = 'Me enredé procesando eso. ¿Me lo repites de otra forma?';
     history = [...history, { role: 'assistant', content: text }];
     return { text, toolCalls, history };
 
