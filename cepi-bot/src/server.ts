@@ -25,7 +25,7 @@ import { ChatTurn } from './llm.js';
 import { TodoErpMcpClient } from './mcpClient.js';
 import { createSession, loadSession, saveSession, BOT_SESSION_ENTITY_ID, BotSession } from './sessionStore.js';
 import {
-  handleV1Flow, fichaGroupFormFilled, firstIncompleteFichaGroup,
+  handleV1Flow, fichaGroupFormFilled, firstIncompleteFichaGroup, fichaCompleta, recalcularCompletitud, guardarGrupoFicha,
   nextIncompleteFichaGroupId, fichaGroupIsComplete, fichaBookmarks, BotForm,
   FICHA_GROUPS,
 } from './flowV1.js';
@@ -36,6 +36,16 @@ import { startWhatsapp } from './whatsapp.js';
 import { startTelegram } from './telegram.js';
 
 dotenv.config();
+
+// Los secretos de producción NO se leen de disco: los inyecta `dotrino-env run --ns
+// <cajón>` en el entorno del proceso, antes de que node arranque (ver ecosystem /
+// PM2). Se hace así y no con `import '@dotrino/vault/config'` porque ese camino
+// necesita top-level await, y bajo el loader `ts-node/esm` que corre este servicio
+// el TLA revienta con un `[Object: null prototype] {}` sin traza — comprobado en la
+// instancia de producción con un archivo de tres líneas.
+//
+// Consecuencia a tener presente: como llegan por entorno, `dotenv.config()` NO los
+// pisa (dotenv no sobrescribe variables ya definidas).
 
 const PATIENT_ENTITY_ID = '11000000-0000-0000-0000-000000000000';
 const EPISODE_ENTITY_ID = '12000000-0000-0000-0000-000000000000';
@@ -269,6 +279,124 @@ app.get('/api/bot/episode-images', async (req: Request, res: Response, next: Nex
   finally {
     if (mcp) await mcp.close().catch(() => {});
   }
+});
+
+/**
+ * /api/bot/ficha?episode_id=<uuid>&patient_id=<uuid> — la ficha completa de un caso:
+ * los grupos en orden, cada uno con su formulario prellenado y si tiene dato.
+ *
+ * Read-only y SIN sesión de chat: es lo que consume el portal de revisión, donde el
+ * médico abre un caso para leerlo y ver qué falta, no para llenarlo. Auth por Bearer
+ * JWT o x-api-key, como el resto de los GET de /api/bot.
+ */
+app.get('/api/bot/ficha', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    const episodeId = String(req.query.episode_id || '').trim() || null;
+    const patientId = String(req.query.patient_id || '').trim() || null;
+    if (!episodeId && !patientId) {
+      return res.status(400).json({ ok: false, error: 'episode_id o patient_id required' });
+    }
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+    const ficha = await fichaCompleta(mcp, { patientId, episodeId });
+    res.json({ ok: true, episode_id: episodeId, patient_id: patientId, ...ficha });
+  } catch (err) { next(err); }
+  finally {
+    if (mcp) await mcp.close().catch(() => {});
+  }
+});
+
+/**
+ * /api/bot/ficha/grupo — guarda UN grupo de la ficha desde el portal de casos.
+ * Body: {group_id, data, episode_id?, patient_id?}
+ *
+ * Sin sesión de chat. Usa el mismo camino de guardado que el flujo conversacional
+ * (`guardarGrupoFicha` → `prepararDatosGrupo` + `coercePatch`), así que las coerciones
+ * y los campos derivados (gravedad_total, BLINK) salen iguales de los dos lados.
+ */
+app.post('/api/bot/ficha/grupo', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    const { group_id, data, episode_id, patient_id } = req.body || {};
+    if (!group_id) return res.status(400).json({ ok: false, error: 'group_id required' });
+    if (!data || typeof data !== 'object') return res.status(400).json({ ok: false, error: 'data required' });
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+    const r = await guardarGrupoFicha(mcp, {
+      groupId: String(group_id), data,
+      patientId: patient_id ? String(patient_id) : null,
+      episodeId: episode_id ? String(episode_id) : null,
+    });
+    res.json(r);
+  } catch (err: any) {
+    // Un payload inválido es culpa del cliente, no del servidor: 400, no 500.
+    const msg = String(err?.message || err);
+    if (/desconocido|falta |ningún campo|se completa subiendo/i.test(msg)) {
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    next(err);
+  }
+  finally { if (mcp) await mcp.close().catch(() => {}); }
+});
+
+/**
+ * /api/bot/ficha/recalcular — recalcula y GUARDA el % de llenado de un episodio.
+ * Body: {episode_id, patient_id?} o {episode_ids: [...]} para un lote (backfill).
+ *
+ * Escribe en el episodio para que el portal pueda BUSCAR por deuda de datos con un
+ * filtro SQL en vez de abrir ficha por ficha (PAPER §22.2).
+ */
+app.post('/api/bot/ficha/recalcular', async (req: Request, res: Response, next: NextFunction) => {
+  let mcp: TodoErpMcpClient | null = null;
+  try {
+    const auth = req.header('authorization') || '';
+    const jwt    = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+    const apiKey = req.header('x-api-key') || process.env.CEPI_GUEST_API_KEY || '';
+    if (!jwt && !apiKey) return res.status(401).json({ ok: false, error: 'Auth required' });
+
+    const body = req.body || {};
+    const ids: string[] = Array.isArray(body.episode_ids) && body.episode_ids.length
+      ? body.episode_ids.map(String)
+      : (body.episode_id ? [String(body.episode_id)] : []);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'episode_id o episode_ids required' });
+
+    mcp = new TodoErpMcpClient({ jwt, apiKey });
+    await mcp.connect();
+
+    const resultados: any[] = [];
+    for (const episodeId of ids) {
+      try {
+        // El paciente sale del propio episodio: los grupos §1-§2 viven en él y sin
+        // resolverlo la ficha se leería a medias.
+        let patientId: string | null = body.patient_id ? String(body.patient_id) : null;
+        if (!patientId) {
+          const ep: any = await mcp.call('entities.get', { id: episodeId });
+          const d = ep?.data?.data || {};
+          const rel = d['11000000-0000-0000-0000-000000000000:patient_id'];
+          patientId = (typeof rel === 'string' ? rel : (Array.isArray(rel) ? rel[0]?.id : rel?.id)) || ep?.data?.patient_id || null;
+        }
+        const r = await recalcularCompletitud(mcp, { episodeId, patientId });
+        resultados.push({ episode_id: episodeId, ...r });
+      } catch (err: any) {
+        resultados.push({ episode_id: episodeId, error: String(err?.message || err) });
+      }
+    }
+    res.json({ ok: true, total: resultados.length, resultados });
+  } catch (err) { next(err); }
+  finally { if (mcp) await mcp.close().catch(() => {}); }
 });
 
 /**

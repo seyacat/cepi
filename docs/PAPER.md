@@ -1110,8 +1110,12 @@ Todas las decisiones estratégicas v1 han sido resueltas. Las **D-Aux** son nuev
 | **D-Aux-10** | Idiomas v1 | Español. i18n de TodoERP soporta más; activar inglés cuando lleguen extranjeros. |
 | **D-Aux-11** | Backups | `pg_dump` diario (retención 30d) + dump semanal full (retención 1 año). Vectores incluidos. |
 | **D-Aux-12** | Logs | `pino` JSON estructurado, rotación diaria, nivel `info` prod / `debug` dev. |
-| **D-Aux-13** | Volumen v1 | ~100 pacientes en 6 meses. No optimizar prematuramente. |
+| **D-Aux-13** | Volumen v1 | ~~~100 pacientes en 6 meses~~. **Corregido 2026-09-03** con datos reales de DrPro: **731 pacientes distintos y 810 citas en un solo mes**, 17.990 citas en 2026. El espejo debe ser lazy (D-Aux-17); el seeder ficticio ya no representa la escala real. |
 | **D-Aux-14** | Permisos temporales (break-glass) | Capacidad **genérica** nueva en TodoERP. Tabla `temporary_permissions` con TTL, justificación, auditoría. Ver §13.5. |
+| **D-Aux-15** | Origen de DrPro | DrPro (doctopro.com) es el sistema **en producción** de la clínica. CEPI es un **espejo aumentado unidireccional**: DrPro → CEPI, nunca al revés. Prepara una migración suave. Ver §21. |
+| **D-Aux-16** | Diagnóstico de la ficha | **Un dato único** (`episode.codigo_cie10`) que se pisa con el último valor. Se evaluó y **descartó** una tabla de diagnósticos multi-fuente versionada: el historial de cambios ya lo da `chatter` y los candidatos de la IA con su probabilidad ya van a `entity_classifications`. La procedencia del cambio se marca con `chatter.source` (migración 019). Ver §21.3. |
+| **D-Aux-18** | Portal de casos | `casos.cepi.ec`: segunda superficie del frontend médico para **revisar, buscar y consolidar**, no para capturar. Comparte usuarios y componentes con telemedicina; **sin chat** en v1. Reusa los 27 grupos de `FICHA_GROUP_SPEC` en vez del formulario del ERP, que es estructurado por entidad y no tiene forma de ficha. Ver §22. |
+| **D-Aux-17** | Materialización lazy | No se baja el histórico completo de DrPro (17.990 citas/año). El espejo indexa la agenda desde el mes en curso y materializa la ficha de un paciente **bajo demanda**. Ver §21.4. |
 
 ---
 
@@ -1308,6 +1312,160 @@ Anotado: placa eritematodescamativa, 4 cm, codo, asintomática.
 - Qué dataset usar para validar localmente (HAM10000 funciona; SLICE-3D si hay GPU).
 - Métrica objetivo de validación (sensibilidad alta para melanoma, AUC ≥ 0.85).
 - Latencia objetivo de clasificación: < 3s por imagen en CPU consumer; < 500ms en GPU.
+
+---
+
+## 21. Espejo DrPro (migración suave)
+
+**DrPro** (doctopro.com, Laravel + JWT) es el sistema **en producción** de la clínica
+Centro de la Piel. CEPI no lo reemplaza de golpe: primero lo **espeja y lo aumenta**.
+El espejo es **unidireccional — DrPro → CEPI**. CEPI nunca escribe en DrPro (D-Aux-15).
+
+### 21.1 Superficie de origen
+
+La API JWT de DrPro no expone nada clínico (solo catálogos y una lista parcial de
+pacientes). Todo lo clínico vive tras la sesión web. Dos endpoints alcanzan:
+
+| endpoint | rol en el espejo |
+|---|---|
+| `GET /event/api/{doctorId}/{clinicaId}?start&end` | **Índice.** La agenda es el universo: `citaId`, `pacienteId`, fecha, estado. |
+| `POST /cita/detallehistorial/{citaId}` | **Ficha completa en una llamada:** `{cita, diagnostico, paciente, edad, recetas, examenes, campos}`. |
+
+Credenciales en el vault (`dotrino-env run --ns drpro`), nunca en `.env`.
+
+Estados de cita: `Terminada` = consulta realizada, tiene ficha. `Pagada` = pagada por
+adelantado, cita **futura sin ficha**. `Agendada`/`Confirmada` = futuras.
+
+### 21.2 Qué se usa de verdad
+
+Medido sobre 60 consultas cerradas (sept-2026). El origen tiene ~50 campos clínicos;
+se usan **cuatro**:
+
+| campo DrPro | uso | destino en CEPI |
+|---|---|---|
+| `anamnesis` | 38/40 | `episode.anamnesis` |
+| `exploracion` | 37/40 | `episode.examen_fisico` |
+| `diagnostico` | 37/40 | `diagnosticos_drpro[]` (trae CIE-10 embebido `(C44.1)Descripción`) |
+| `tratamiento` | 37/40 | `episode.plan` |
+| campo pers. "Motivo de Consulta" | 49/60 | `episode.motivo_consulta` |
+| campo pers. "NOMBRE DEL PROFESIONAL" | 58/60 | `episode.examinador_nombre` |
+| `observaciones` | 7/40 | `episode.observaciones` |
+| `evolucion` | 4/40 | `episode.seguimiento` |
+
+**Vacío en el 100% de la muestra** — no se migra nada de esto: recetas, exámenes,
+imágenes, `diagnosticoPre`/`diagnosticoSec`, los cinco campos de histopatología, y unos
+45 campos antropométricos y de signos vitales (peso, altura, presión, IMC, pulso,
+perímetros, pliegues, grasa visceral) que están todos en `0.000`.
+
+El **paciente** sí viene bien cargado y se migra entero: identidad, `enfermedades`,
+`enfCronicas`, `alergias`, `medicamentos`, `intervenciones`, hábitos (`fumaId`/`tomaId`)
+y el consentimiento LOPDP (`consentimiento_datos_*` → entidad `consent`).
+
+### 21.3 El diagnóstico de la ficha (D-Aux-16)
+
+El diagnóstico de un episodio es **un dato único** — `codigo_cie10` + `diagnostico` en
+`entity_episode` — que **se pisa con el último valor**. No hay lista de diagnósticos por
+fuente, y es deliberado: se evaluó una tabla multi-fuente versionada (`origen`,
+`fuente_id`, hash de contenido, triggers) y se descartó por redundante. Lo que parecía
+justificarla ya está resuelto en dos sitios que existen:
+
+| lo que hace falta | dónde vive ya |
+|---|---|
+| quién cambió el diagnóstico y cuándo | `chatter` — `type='change'`, `changes={from,to,label}`, `created_by`, `created_at` |
+| los candidatos de la IA con su probabilidad | `entity_classifications` — `model_id` + `labels` (PAPER §D-11, multiclase top-5) |
+
+Una tercera tabla habría sido un tercer lugar donde buscar lo mismo.
+
+Visto desde la ficha el diagnóstico se pisa; el historial completo se consulta en el
+chatter del episodio. `diagnostico_fuente` guarda de dónde salió el valor vigente
+(`drpro`, el modelo, el médico) para no tener que leer el log solo para eso.
+
+**Límite conocido:** `chatter` solo registra lo que pasa por `PUT /api/entities/:id`.
+Una escritura directa por SQL no deja asiento. Por eso el espejo escribe por la ruta —
+si escribiera a la tabla, el historial quedaría mudo justo para los cambios importados.
+
+La procedencia se declara con la cabecera `X-Change-Source` y se guarda en
+`chatter.source` (migración 019, genérica: la columna es esquema, el valor es dato).
+El espejo escribe `drpro`; sin cabecera el asiento queda en NULL = "lo hizo un usuario".
+
+### 21.4 Materialización lazy (D-Aux-17)
+
+Bajar el histórico completo es inviable e innecesario (17.990 citas en 2026). El espejo:
+
+1. **Indexa** la agenda desde el **primer día del mes en curso** (`DRPRO_DESDE`,
+   por defecto `date_trunc('month', now())`). Ahí salen los `pacienteId` reales — la
+   API JWT `misPacientes` devuelve una lista parcial y no sirve como universo.
+2. **Materializa bajo demanda**: al abrir la ficha de un paciente se trae su
+   `detallehistorial` y se hace upsert de paciente + episodios + diagnósticos.
+3. **Idempotencia** por identidad externa: `patient.drpro_id`, `episode.drpro_cita_id`,
+   `diagnosis.drpro_cita_id`. Reimportar no duplica. `drpro_sync_at` marca la última
+   materialización.
+4. Las citas **futuras sin ficha** también se espejan, como episodios en estado
+   `agendado`, que se completan cuando DrPro las pasa a `Terminada`.
+
+El espejo es *aumentado*: lo que CEPI agrega (imágenes clínicas, clasificación ISIC,
+diagnósticos de IA, telemedicina) vive solo en CEPI y nunca vuelve a DrPro.
+
+---
+
+## 22. Portal de casos (`casos.cepi.ec`)
+
+Segunda superficie del frontend médico, hermana de `telemedicina.cepi.ec`. **Comparte
+usuarios, auth y componentes**; cambia el propósito.
+
+| | telemedicina.cepi.ec | casos.cepi.ec |
+|---|---|---|
+| cuándo | con el paciente delante | después, en frío |
+| qué hace el médico | llena un caso | revisa, busca, compara |
+| conducción | chat que guía el llenado | navegación directa, **sin chat** |
+| unidad de trabajo | la visita | el corpus |
+
+No es un tercer frontend. `App.vue` conmuta por un string `view` (no hay `vue-router`),
+así que el portal es una rama más y reusa `BotForm`, `EntitySearchField`, `IcdSearchField`,
+`ImageGallery` y la sesión. D-Aux-4 queda intacta: los médicos siguen operando en el
+frontend médico unificado, no en TodoERP.
+
+### 22.1 Por qué no se construyó sobre el ERP
+
+El ERP ya tiene formulario y lista para las 8 entidades clínicas, generados desde
+`entity_definitions`. Aun así no sirve para esto: su formulario es **estructurado por
+entidad**, y la ficha clínica es un documento numerado (1.1 Datos de contacto → 4.7
+Imágenes → 8 Consentimiento) que cruza `patient` y `episode`. Esa forma ya existe, y no
+en el ERP: `FICHA_GROUP_SPEC` en `cepi-bot/src/flowV1.ts` define los **27 grupos** con sus
+campos y su entidad destino. El portal la reusa entera.
+
+### 22.2 Qué datos faltan
+
+`fichaBookmarksFor(mcp, {patientId, episodeId})` devuelve, grupo por grupo, si tiene dato.
+Era el riel de marcadores del chat; se desacopló de la sesión para que el portal pueda
+abrir cualquier ficha por id. `fichaCompleta()` arma los 27 grupos prellenados **en 2
+lecturas de entidad**, no en 27, y expone la lista de faltantes.
+
+Esto no es cosmético. Las fichas espejadas de DrPro llenan anamnesis, exploración, plan y
+diagnóstico, y dejan **vacíos todos los grupos dermatológicos** (4.x, BLINK) porque el
+origen no tiene esos campos (§21.2). Sin el mapa, una ficha importada parece información
+perdida en vez de información que nunca existió.
+
+Superficie: `GET /api/bot/ficha?episode_id=&patient_id=` — solo lectura, sin sesión.
+
+### 22.3 Dos búsquedas que no hay que mezclar
+
+| eje | qué permite | corpus |
+|---|---|---|
+| **Campos de la ficha** (CIE-10, lesión elemental, topografía, edad, sexo) | cohortes: "los casos de este tipo" | los espejados de DrPro + los de CEPI |
+| **Embeddings de imagen** (`vectors.search`) | "fotos de casos parecidos" | solo los capturados en CEPI |
+
+`cepi-isic` es un servicio real (`/embed`, `/classify/triage`, `/classify/multiclass`), no
+el stub del `models_registry`. Pero **el espejo de DrPro no trae una sola imagen**: de 60
+consultas muestreadas, 0 tenían fotos, exámenes ni recetas. Todo lo importado es texto.
+La búsqueda visual solo alcanza a lo capturado en CEPI hasta que entre la importación de
+fotos por iCloud (pendiente).
+
+### 22.4 El bot llega después
+
+El portal v1 **no lleva chat**. Cuando llegue, es un **analista sobre el corpus**, no un
+llenador: agrupa, compara y responde sobre casos ya registrados. El flujo de slot-filling
+(`flowV1`) es de telemedicina y no se invoca acá.
 
 ---
 

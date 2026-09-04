@@ -18,6 +18,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import ChatList from './ChatList.vue';
 import IntakeChat from './IntakeChat.vue';
 import { bindBackState } from '../useBackStack.js';
+import { useRoute, useRouter } from 'vue-router';
 
 defineProps({ user: Object });
 const emit = defineEmits(['head']);
@@ -80,7 +81,20 @@ defineExpose({ openPatientById });
 // instead of leaving the app.
 bindBackState(() => isMobile.value && view.value === 'chat', () => { view.value = 'list'; });
 
-onMounted(() => { mq.addEventListener('change', onMq); });
+// `/chat?paciente=<id>` abre ese paciente: es como llegan las notificaciones desde
+// que la vista la manda la ruta. La query se limpia después para que un atrás o un
+// refresco no vuelvan a abrirlo solos.
+const route = useRoute();
+const router = useRouter();
+function abrirDesdeLaRuta() {
+  const id = route.query.paciente;
+  if (!id) return;
+  openPatientById(String(id), route.query.nombre ? String(route.query.nombre) : '');
+  router.replace({ path: '/chat' });
+}
+watch(() => route.query.paciente, abrirDesdeLaRuta);
+
+onMounted(() => { mq.addEventListener('change', onMq); abrirDesdeLaRuta(); });
 onUnmounted(() => { mq.removeEventListener('change', onMq); });
 </script>
 

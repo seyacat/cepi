@@ -11,7 +11,7 @@
         />
       </div>
       <div class="header-center">
-        <strong class="brand">Telemedicina</strong>
+        <strong class="brand">{{ marca }}</strong>
       </div>
       <div class="header-right">
         <Notifications v-if="user && !isPending" :user="user" @open="onNotifOpen" />
@@ -32,30 +32,31 @@
           <button v-if="canInstall" class="install-btn" @click="installApp" title="Instalar la app en tu dispositivo">📲 Instalar app</button>
           <button v-if="showNotifOptin && !isPending" class="notif-optin" @click="enableNotifs(); showTopMenu = false" title="Activar notificaciones push">🔔 Activar</button>
           <button v-if="!isPending && !showProfile" @click="openProfile">👤 Perfil</button>
-          <button v-if="isAdmin && !showAdmin" @click="showAdmin = true; showProfile = false; showTopMenu = false">Admin</button>
+          <button v-if="!isPending && !showCasos" @click="abrirCasos">🗂️ Casos</button>
+          <button v-if="showCasos" @click="goChat">💬 Telemedicina</button>
+          <button v-if="isAdmin && !showAdmin" @click="showTopMenu = false; $router.push('/admin')">Admin</button>
           <button v-if="showAdmin || showProfile" @click="goChat">Volver</button>
         </span>
       </div>
     </header>
     <div v-if="notifMsg" class="notif-toast" @click="notifMsg = ''">{{ notifMsg }}</div>
     <main>
+      <!-- Sin sesión el login se pinta POR ENCIMA de la ruta, no como una ruta más:
+           así el enlace a un caso sobrevive al login y se abre al entrar. -->
       <VerifyEmail v-if="view === 'verify'" :email="verifyEmailAddr" @done="goLogin" />
       <template v-else-if="!authed">
         <Register v-if="view === 'register'" @go-login="view = 'login'" @registered="onRegistered" />
         <Login v-else @logged-in="onLoggedIn" @go-register="view = 'register'" />
       </template>
-      <template v-else>
-        <div v-if="showAdmin" class="admin-wrap">
-          <div class="admin-tabs">
-            <button :class="{ on: adminTab === 'users' }" @click="adminTab = 'users'">Usuarios</button>
-            <button :class="{ on: adminTab === 'orgs' }" @click="adminTab = 'orgs'">Organizaciones</button>
-          </div>
-          <AdminOrgs v-if="adminTab === 'orgs'" />
-          <AdminUsers v-else />
-        </div>
-        <Profile v-else-if="showProfile" :user="user" @back="goChat" @saved="onProfileSaved" @logout="onLogout" />
-        <ChatShell v-else ref="chatShellRef" :user="user" @head="chatHeadActive = $event" />
-      </template>
+      <!-- Sin `ref` sobre el componente: con vistas cargadas de forma diferida, un
+           template ref sobre `<component :is>` revienta el hidratado de Vue. Lo que
+           lo necesitaba —abrir un paciente desde una notificación— ahora viaja por
+           la propia ruta, que además deja el enlace compartible. -->
+      <RouterView
+        v-else :user="user"
+        @head="chatHeadActive = $event" @back="goChat"
+        @saved="onProfileSaved" @logout="onLogout"
+      />
     </main>
     </template>
   </div>
@@ -66,11 +67,9 @@ import { ref, computed, watch, nextTick, onMounted } from 'vue';
 import Login from './components/Login.vue';
 import Register from './components/Register.vue';
 import VerifyEmail from './components/VerifyEmail.vue';
-import AdminUsers from './components/AdminUsers.vue';
-import Profile from './components/Profile.vue';
-import AdminOrgs from './components/AdminOrgs.vue';
 import PendingApproval from './components/PendingApproval.vue';
-import ChatShell from './components/ChatShell.vue';
+import { RouterView, useRoute, useRouter } from 'vue-router';
+import { inicioSegunHost } from './router.js';
 import Notifications from './components/Notifications.vue';
 import { whoami, logout, switchOrg } from './api.js';
 import { enableWebPush } from './pwa.js';
@@ -78,36 +77,43 @@ import { bindBackState } from './useBackStack.js';
 
 const user = ref(null);
 const authed = ref(false);
-const showAdmin = ref(false);
-const showProfile = ref(false);          // vista "Mi perfil"
+const route = useRoute();
+const router = useRouter();
+// La vista la manda la RUTA: `showAdmin`/`showProfile`/`showCasos` eran tres banderas
+// que había que mantener en sincronía a mano, y ninguna dejaba enlazar nada.
+const showAdmin = computed(() => route.name === 'admin');
+const showProfile = computed(() => route.name === 'perfil');
+const showCasos = computed(() => String(route.name || '').startsWith('caso') || route.name === 'paciente');
+
+// Portal de casos (PAPER §22): misma app, misma sesión, otra superficie. Se sirve en
+// casos.cepi.ec, así que el host decide con qué vista arranca; el menú deja saltar de
+// una a la otra sin volver a entrar.
+const marca = computed(() => route.meta?.marca || 'Telemedicina');
+function abrirCasos() { showTopMenu.value = false; router.push('/casos'); }
 const showTopMenu = ref(false);          // burger de acciones del topbar (mobile)
 const chatHeadActive = ref(false);       // el chat muestra su propio burger (paciente abierto)
-const chatShellRef = ref(null);          // para abrir un paciente desde una notificación
 // Si el chat toma el header, cierra el menú del topbar (su burger desaparece).
 watch(chatHeadActive, (v) => { if (v) showTopMenu.value = false; });
 
 function openProfile() {
-  showProfile.value = true;
-  showAdmin.value = false;
   showTopMenu.value = false;
+  router.push('/perfil');
 }
 // "Volver" siempre lleva al chat (cierra Admin/Perfil y el menú).
 function goChat() {
-  showAdmin.value = false;
-  showProfile.value = false;
+  // "Volver" siempre lleva a la superficie con la que arranca este dominio.
   showTopMenu.value = false;
+  router.push(inicioSegunHost());
 }
 function onProfileSaved(u) {
   // El perfil devolvió el user actualizado (nombre/teléfono/cédula) → refrescar.
   if (u) user.value = { ...user.value, ...u };
 }
 // Click en una notificación → ir al chat y abrir el paciente que la origina.
-async function onNotifOpen({ id, name }) {
-  goChat();                              // asegura que ChatShell esté montado
-  await nextTick();
-  chatShellRef.value?.openPatientById(id, name);
+function onNotifOpen({ id, name }) {
+  // La notificación NAVEGA; ChatShell lee el paciente de la query al montar.
+  router.push({ path: '/chat', query: { paciente: id, ...(name ? { nombre: name } : {}) } });
 }
-const adminTab = ref('users');
 const isAdmin = computed(() => !!user.value?.permissions?.includes('*:*:*:*'));
 const isPending = computed(() => authed.value && user.value?.role === 'pendiente');
 
@@ -169,11 +175,20 @@ function goLogin() {
   view.value = 'login';
 }
 
+// Guarda de ruta: el botón de Admin se oculta a quien no lo es, pero la URL se
+// puede teclear. Sin esto, un no-admin llegaba a /admin y veía una pantalla rota a
+// base de 403 — el backend deniega bien, pero el usuario no entiende qué pasó.
+watch([() => route.name, isAdmin, authed], ([nombre, admin, hayCuenta]) => {
+  if (nombre === 'admin' && hayCuenta && !admin) router.replace(inicioSegunHost());
+}, { immediate: true });
+
 // Device/browser Back navigates within the app (register/verify/admin) instead
 // of leaving the page. The chat list↔detail Back is handled inside ChatShell.
 bindBackState(() => view.value === 'register', () => { view.value = 'login'; });
 bindBackState(() => view.value === 'verify', () => { goLogin(); });
-bindBackState(() => showAdmin.value, () => { showAdmin.value = false; });
+// El atrás dentro de /admin ya lo maneja el router: cada navegación es una entrada
+// del historial. `bindBackState` sigue haciendo falta para register/verify, que se
+// pintan por encima de la ruta y no pasan por él.
 // Tema claro fijo por ahora (se quitó el toggle de modo oscuro).
 document.documentElement.dataset.theme = 'light';
 
@@ -208,7 +223,7 @@ function onLogout() {
   logout();
   user.value = null;
   authed.value = false;
-  showAdmin.value = false;
+  router.push(inicioSegunHost());
 }
 
 onMounted(refresh);

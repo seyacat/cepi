@@ -364,3 +364,89 @@ export async function uploadAttachment(file, { entityId, fieldKey } = {}) {
   if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
   return Array.isArray(body) ? body[0] : body;
 }
+
+/**
+ * Ficha completa de un caso para el portal de casos: los 27 grupos en orden, cada
+ * uno con su formulario prellenado y si tiene dato, más el conteo de faltantes.
+ * Solo lectura y sin sesión de chat — el portal revisa, no llena (PAPER §22).
+ */
+export async function fichaCompleta({ episodeId = null, patientId = null } = {}) {
+  const qs = new URLSearchParams();
+  if (episodeId) qs.set('episode_id', episodeId);
+  if (patientId) qs.set('patient_id', patientId);
+  return call(`/api/bot/ficha?${qs.toString()}`);
+}
+
+const DEF_EPISODE = '12000000-0000-0000-0000-000000000000';
+const DEF_PATIENT = '11000000-0000-0000-0000-000000000000';
+
+/**
+ * Casos (episodios) del portal, filtrados sobre columnas reales del ERP.
+ * `origen` distingue lo espejado de DrPro de lo capturado en CEPI: el espejo deja
+ * `drpro_cita_id`, así que su presencia (o ausencia) es el filtro (PAPER §22.3).
+ */
+export async function listarCasos({ q = '', codigo_cie10 = '', estado = '', desde = '', hasta = '', origen = '', deuda = '', orden = '-fecha', limit = 40, offset = 0 } = {}) {
+  // El sort de la API usa el prefijo '-' para descendente, no 'campo:desc'.
+  const p = new URLSearchParams({ type: 'business', entity_id: DEF_EPISODE, limit, offset, sort: orden || '-fecha' });
+  if (q) p.set('q', q);
+  if (codigo_cie10) p.set('filter[codigo_cie10][like]', codigo_cie10);
+  if (estado) p.set('filter[estado]', estado);
+  if (desde) p.set('filter[fecha][gte]', desde);
+  if (hasta) p.set('filter[fecha][lte]', hasta);
+  // Deuda de datos: el % vive materializado en el episodio (medical-seed 009) para
+  // poder filtrarlo en SQL; calcularlo al vuelo serían 2 lecturas por caso listado.
+  if (deuda) p.set('filter[ficha_completitud][lt]', deuda);
+  if (origen === 'drpro') p.set('filter[drpro_cita_id][empty]', '0');
+  if (origen === 'cepi') p.set('filter[drpro_cita_id][empty]', '1');
+  return call(`/api/entities?${p.toString()}`);
+}
+
+/** Pacientes por id, en lote — para resolver los nombres de una lista de casos. */
+export async function listarPacientes({ ids = [] } = {}) {
+  if (!ids.length) return { data: [] };
+  const p = new URLSearchParams({ type: 'business', entity_id: DEF_PATIENT, ids: ids.join(','), limit: String(ids.length) });
+  return call(`/api/entities?${p.toString()}`);
+}
+
+/**
+ * Guarda un grupo de la ficha desde el portal. Va por cepi-bot y no directo al ERP
+ * a propósito: ahí viven las coerciones y los campos derivados (gravedad_total, BLINK)
+ * que el chat aplica al guardar los mismos grupos. Escribir directo al ERP dejaría
+ * fichas con los derivados a medias según por dónde se hubieran editado.
+ */
+export async function guardarGrupoFicha({ groupId, data, episodeId = null, patientId = null }) {
+  return call('/api/bot/ficha/grupo', {
+    method: 'POST',
+    body: JSON.stringify({ group_id: groupId, data, episode_id: episodeId, patient_id: patientId }),
+  });
+}
+
+/**
+ * Pacientes para la pestaña de búsqueda por persona. `q` busca en todas las columnas
+ * de texto (nombre, apellidos, cédula, ciudad…), que es lo que hace `?q=` en el ERP.
+ */
+export async function listarPacientesBusqueda({ q = '', origen = '', limit = 40, offset = 0 } = {}) {
+  const p = new URLSearchParams({ type: 'business', entity_id: DEF_PATIENT, limit, offset, sort: 'apellidos' });
+  if (q) p.set('q', q);
+  if (origen === 'drpro') p.set('filter[drpro_id][empty]', '0');
+  if (origen === 'cepi') p.set('filter[drpro_id][empty]', '1');
+  return call(`/api/entities?${p.toString()}`);
+}
+
+/** Los episodios de un paciente, para abrir sus visitas desde su ficha. */
+export async function listarCasosDePaciente(patientId) {
+  const p = new URLSearchParams({
+    type: 'business', entity_id: DEF_EPISODE, limit: '100', sort: '-fecha',
+    'filter[patient_id]': patientId,
+  });
+  return call(`/api/entities?${p.toString()}`);
+}
+
+/**
+ * Un registro por id. Se usa al abrir un caso por URL: la ruta trae el episodio pero
+ * no de quién es, y sin el paciente no hay visitas hermanas que listar ni comparar.
+ */
+export async function obtenerEntidad(id) {
+  const r = await call(`/api/entities/${id}`);
+  return r?.data || r;
+}

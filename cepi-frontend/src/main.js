@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import App from './App.vue';
+import router from './router.js';
 import './style.css';
 import { registerServiceWorker, initWebPush } from './pwa.js';
 import { initOfflineQueue } from './api.js';
@@ -9,7 +10,7 @@ import { initNativePush, unregisterNativePush } from './native/push.js';
 // Nativo: reescribir /api → backend absoluto ANTES de cualquier request.
 installNativeHttp();
 
-createApp(App).mount('#app');
+createApp(App).use(router).mount('#app');
 
 // Nativo: ocultar splash + avisar a Capgo (OTA) que el bundle arrancó bien.
 readyNative();

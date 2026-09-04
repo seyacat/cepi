@@ -401,11 +401,29 @@ export function fichaGroupForm(id: string): BotForm | null {
 export async function fichaGroupFormFilled(
   id: string, mcp: TodoErpMcpClient, session: BotSession,
 ): Promise<BotForm | null> {
+  return fichaGroupFormFilledFor(id, mcp, {
+    patientId: session.active_patient_id, episodeId: session.active_episode_id,
+  });
+}
+
+/** El paciente y el episodio de una ficha, sin pasar por la sesión del chat. */
+export interface FichaTarget {
+  patientId?: string | null;
+  episodeId?: string | null;
+}
+
+/**
+ * Igual que `fichaGroupFormFilled` pero contra ids explícitos. Es la versión que
+ * usa el portal de revisión: ahí se abre una ficha cualquiera por id, sin sesión
+ * de chat detrás y sin intención de llenarla.
+ */
+export async function fichaGroupFormFilledFor(
+  id: string, mcp: TodoErpMcpClient, target: FichaTarget,
+): Promise<BotForm | null> {
   const form = fichaGroupForm(id);
   const g = FICHA_GROUPS.find(x => x.id === id);
   if (!form || !g) return form;
-  const entityId = g.target === 'patient'
-    ? session.active_patient_id : session.active_episode_id;
+  const entityId = g.target === 'patient' ? target.patientId : target.episodeId;
   if (!entityId) return form;
   try {
     const r = await mcp.call('entities.get', { id: entityId });
@@ -427,7 +445,17 @@ export function nextFichaGroupId(id: string): string | null {
   return i >= 0 && i < FICHA_GROUPS.length - 1 ? FICHA_GROUPS[i + 1].id : null;
 }
 
-export interface FichaBookmark { id: string; label: string; category: string; done: boolean; }
+/**
+ * `done` y `conDato` responden preguntas distintas y no hay que confundirlas:
+ *
+ *   done    — ¿está contestada la pregunta ANCLA del grupo (su primer campo)? Es lo
+ *             que usa el flujo del chat para decidir qué preguntar a continuación.
+ *   conDato — ¿el grupo tiene ALGO cargado? Es lo que muestra el portal de revisión:
+ *             un grupo con el detalle lleno pero sin su booleano ancla (típico de lo
+ *             importado de DrPro) no puede leerse como vacío, o parece que se perdió
+ *             información que en realidad está ahí.
+ */
+export interface FichaBookmark { id: string; label: string; category: string; done: boolean; conDato: boolean; }
 
 /**
  * The bookmark rail: every ficha group + whether its field actually holds a
@@ -437,6 +465,28 @@ export interface FichaBookmark { id: string; label: string; category: string; do
 export async function fichaBookmarks(
   mcp: TodoErpMcpClient, session: BotSession,
 ): Promise<FichaBookmark[]> {
+  return fichaBookmarksFor(mcp, {
+    patientId: session.active_patient_id, episodeId: session.active_episode_id,
+  });
+}
+
+/**
+ * Igual que `fichaBookmarks` pero contra ids explícitos: el mapa de qué grupos de
+ * la ficha tienen dato y cuáles no, para un paciente/episodio cualquiera.
+ *
+ * Es la respuesta a "qué datos faltan" del portal de revisión, y también sirve para
+ * las fichas espejadas de DrPro, que llenan anamnesis/exploración/plan/diagnóstico
+ * pero dejan vacíos los grupos dermatológicos (4.x, BLINK) porque el origen no los
+ * tiene. Sin este mapa esa ficha parece información perdida en vez de información
+ * que nunca existió.
+ */
+export async function fichaBookmarksFor(
+  mcp: TodoErpMcpClient, target: FichaTarget,
+): Promise<FichaBookmark[]> {
+  const session = {
+    active_patient_id: target.patientId ?? null,
+    active_episode_id: target.episodeId ?? null,
+  } as Pick<BotSession, 'active_patient_id' | 'active_episode_id'>;
   let patientData: Record<string, unknown> = {};
   let episodeData: Record<string, unknown> = {};
   if (session.active_patient_id) {
@@ -477,19 +527,149 @@ export async function fichaBookmarks(
     } catch { /* treat as none */ }
   }
 
+  const lleno = (v: unknown) => v !== undefined && v !== null && v !== '';
+
   return FICHA_GROUPS.map(g => {
+    // Los grupos de imagen no guardan campo en la entidad: crean registros
+    // clinical_image / consent. Para ellos "tener dato" es "existe el registro".
     if (g.id === 'g_4_7') {
-      return { id: g.id, label: g.label, category: g.category, done: hasLesionImages };
+      return { id: g.id, label: g.label, category: g.category, done: hasLesionImages, conDato: hasLesionImages };
     }
     if (g.id === 'g_8') {
-      return { id: g.id, label: g.label, category: g.category, done: hasConsentImages };
+      return { id: g.id, label: g.label, category: g.category, done: hasConsentImages, conDato: hasConsentImages };
     }
     const src = g.target === 'patient' ? patientData : episodeData;
-    const key = g.fields[0].key as string;
-    const v = src[key];
-    const done = v !== undefined && v !== null && v !== '';
-    return { id: g.id, label: g.label, category: g.category, done };
+    const done = lleno(src[g.fields[0].key as string]);
+    const conDato = g.fields.some(f => f.key && lleno(src[f.key as string]));
+    return { id: g.id, label: g.label, category: g.category, done, conDato };
   });
+}
+
+/** Un grupo de la ficha con su formulario ya prellenado y si tiene dato o no. */
+export interface FichaGrupoCompleto {
+  id: string;
+  label: string;
+  category: string;
+  done: boolean;
+  target: string;
+  form: BotForm | null;
+}
+
+/**
+ * La ficha ENTERA de un paciente/episodio: los grupos en orden, cada uno con su
+ * formulario prellenado y si tiene dato. Es lo que consume el portal de revisión,
+ * donde el médico abre un caso para leerlo y ver qué falta — no para llenarlo.
+ *
+ * Hace 2 lecturas de entidad y arma los 27 formularios en memoria, en vez de una
+ * lectura por grupo: prellenar grupo a grupo con `fichaGroupFormFilledFor` costaría
+ * 27 round-trips MCP por ficha abierta.
+ */
+export async function fichaCompleta(
+  mcp: TodoErpMcpClient, target: FichaTarget,
+): Promise<{ grupos: FichaGrupoCompleto[]; faltantes: string[]; completos: number; total: number }> {
+  let patientData: Record<string, unknown> = {};
+  let episodeData: Record<string, unknown> = {};
+  if (target.patientId) {
+    try {
+      const r = await mcp.call('entities.get', { id: target.patientId });
+      patientData = ((r as any)?.data?.data) || {};
+    } catch { patientData = {}; }
+  }
+  if (target.episodeId) {
+    try {
+      const r = await mcp.call('entities.get', { id: target.episodeId });
+      episodeData = ((r as any)?.data?.data) || {};
+    } catch { episodeData = {}; }
+  }
+
+  const marcas = await fichaBookmarksFor(mcp, target);
+  // El portal muestra si el grupo TIENE ALGO, no si está contestada su pregunta ancla.
+  const conDatoById = new Map(marcas.map(m => [m.id, m.conDato]));
+
+  const grupos = FICHA_GROUPS.map(g => {
+    const form = fichaGroupForm(g.id);
+    const src = g.target === 'patient' ? patientData : episodeData;
+    if (form) {
+      const values: Record<string, unknown> = {};
+      for (const f of g.fields) {
+        const k = f.key as string;
+        if (k && src[k] !== undefined && src[k] !== null && src[k] !== '') values[k] = src[k];
+      }
+      if (Object.keys(values).length) form.values = values;
+    }
+    return {
+      id: g.id, label: g.label, category: g.category, target: g.target,
+      done: conDatoById.get(g.id) ?? false, form,
+    };
+  });
+
+  const faltantes = grupos.filter(g => !g.done).map(g => g.label);
+  return { grupos, faltantes, completos: grupos.length - faltantes.length, total: grupos.length };
+}
+
+/**
+ * Calcula la completitud de la ficha y la GUARDA en el episodio.
+ *
+ * El portal de casos busca deuda de datos ("los casos a los que les falta la mitad"),
+ * y eso hay que filtrarlo en SQL sobre cientos de episodios: calcularlo al vuelo sería
+ * 2 lecturas de entidad por caso listado. Por eso el número se materializa en
+ * `entity_episode` (medical-seed 009) y el portal filtra y ordena por columna.
+ *
+ * Vive acá y no en TodoERP porque los 27 grupos son vocabulario clínico y el ERP es
+ * genérico: el ERP solo guarda el número que este cálculo produce.
+ */
+/**
+ * Recalcula la completitud tras guardar, sin poder romper el guardado.
+ *
+ * El % se calcula EN EL MOMENTO DEL GUARDADO y no por lote: así toda ficha nueva
+ * nace con su deuda de datos medida y el portal puede buscarla. Un fallo del
+ * cálculo se registra pero NO se propaga: es una métrica, y perderla no justifica
+ * hacer fallar una escritura clínica que ya se completó.
+ */
+export async function recalcularTrasGuardar(
+  mcp: TodoErpMcpClient, session: BotSession,
+): Promise<void> {
+  if (!session.active_episode_id) return;
+  try {
+    await recalcularCompletitud(mcp, {
+      patientId: session.active_patient_id, episodeId: session.active_episode_id,
+    });
+  } catch (err) {
+    console.error('[ficha] no se pudo recalcular la completitud:', (err as any)?.message || err);
+  }
+}
+
+export async function recalcularCompletitud(
+  mcp: TodoErpMcpClient, target: FichaTarget,
+): Promise<{ pct: number; conDato: number; total: number; faltantes: string[] }> {
+  if (!target.episodeId) throw new Error('recalcularCompletitud requiere episodeId');
+
+  const marcas = await fichaBookmarksFor(mcp, target);
+  const total = marcas.length;
+  const conDato = marcas.filter(m => m.conDato).length;
+  const faltantes = marcas.filter(m => !m.conDato).map(m => m.label);
+  const pct = total ? Math.round((conDato / total) * 100) : 0;
+
+  // `record_type` es OBLIGATORIO en entities.update; sin él la tool rechaza la
+  // escritura. Y el resultado se COMPRUEBA: ignorarlo hacía que el recálculo
+  // reportara éxito con los campos en NULL, que es peor que fallar.
+  const w: any = await mcp.call('entities.update', {
+    id: target.episodeId,
+    record_type: 'business',
+    data: {
+      ficha_completitud: pct,
+      ficha_grupos_con_dato: conDato,
+      // Se guarda la lista y no solo el número para que el listado pueda decir QUÉ
+      // falta sin recalcular la ficha entera en cada fila.
+      ficha_faltantes: faltantes.join('; '),
+      ficha_calculada_at: new Date().toISOString(),
+    },
+  });
+  if (w?.ok === false || w?.isError) {
+    throw new Error(`no se pudo guardar la completitud del episodio ${target.episodeId}: ${w?.error || JSON.stringify(w).slice(0, 160)}`);
+  }
+
+  return { pct, conDato, total, faltantes };
 }
 
 /**
@@ -611,6 +791,105 @@ function parseAttachmentCsv(v: unknown): string[] {
  * sending the ficha form is itself the user's explicit action, so no extra
  * sí/no confirmation gate is interposed.
  */
+/**
+ * Coerciones y campos derivados de un grupo de la ficha, **mutando `data` en sitio**.
+ *
+ * Vive aparte del handler del chat porque el portal de casos guarda los mismos grupos
+ * sin sesión de chat detrás (PAPER §22). Dos caminos de escritura distintos sobre una
+ * ficha clínica es como se termina con un BLINK calculado en un lado y no en el otro.
+ */
+export async function prepararDatosGrupo(
+  gid: string,
+  data: Record<string, unknown>,
+  mcp: TodoErpMcpClient,
+  episodeId?: string | null,
+): Promise<Record<string, unknown>> {
+  const grp = FICHA_GROUPS.find(g => g.id === gid);
+  const isPatient = grp?.target === 'patient';
+
+  // Columna numérica — el input llega como texto.
+  if (data.edad != null && data.edad !== '') data.edad = Number(data.edad);
+  if (isPatient) return data;
+
+  const gKeys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
+  for (const k of gKeys) {
+    if (data[k] != null && data[k] !== '') data[k] = Number(data[k]);
+  }
+  // Los formularios son atómicos (un campo cada uno), así que un envío nunca trae las
+  // tres gravedades: el total se re-deriva leyendo lo que ya hay en el episodio.
+  if (gKeys.some(k => data[k] != null) && episodeId) {
+    try {
+      const er = await mcp.call('entities.get', { id: episodeId });
+      const cur = ((er as any)?.data?.data) || {};
+      data.gravedad_total = gKeys.reduce((a, k) => a + (Number(data[k] ?? cur[k]) || 0), 0);
+    } catch { /* sin total */ }
+  }
+  // BLINK — la sección entera es un solo formulario, así que este envío trae las 5
+  // respuestas; el puntaje (L+I+N/C+K, 1 pt c/u) y el resultado se autocalculan.
+  if (gid === 'g_blink') {
+    const scoreKeys = ['blink_lonely', 'blink_irregular', 'blink_nervios_cambios', 'blink_known_clues'];
+    const total = scoreKeys.reduce((a, k) => a + (data[k] === true ? 1 : 0), 0);
+    data.blink_total = total;
+    data.blink_resultado = data.blink_benigna === true
+      ? 'Benigna evidente — no precisa más estudios'
+      : total >= 2
+        ? `Sugiere malignidad (${total}/4) — biopsia`
+        : `Sugiere benignidad (${total}/4)`;
+  }
+  return data;
+}
+
+/**
+ * Guarda un grupo de la ficha contra ids explícitos, sin sesión de chat.
+ * Es el camino de edición del portal de casos: mismas coerciones y derivados que el
+ * chat, y recálculo de la completitud al terminar.
+ */
+export async function guardarGrupoFicha(
+  mcp: TodoErpMcpClient,
+  args: { groupId: string; data: Record<string, unknown>; patientId?: string | null; episodeId?: string | null },
+): Promise<{ ok: true; target: string; targetId: string; completitud: number | null }> {
+  const grp = FICHA_GROUPS.find(g => g.id === args.groupId);
+  if (!grp) throw new Error(`grupo de ficha desconocido: ${args.groupId}`);
+  // Los grupos de imagen crean registros clinical_image / consent, no escriben campos:
+  // su alta va por el flujo de subida, no por acá.
+  if (args.groupId === 'g_4_7' || args.groupId === 'g_8') {
+    throw new Error(`el grupo ${grp.label} se completa subiendo imágenes, no con este endpoint`);
+  }
+
+  const isPatient = grp.target === 'patient';
+  const targetId = isPatient ? args.patientId : args.episodeId;
+  if (!targetId) throw new Error(`falta ${isPatient ? 'patient_id' : 'episode_id'} para guardar ${grp.label}`);
+
+  // Solo se aceptan las claves QUE PERTENECEN al grupo: sin esto, un payload podría
+  // escribir cualquier campo de la entidad desde un formulario que no lo declara.
+  const permitidas = new Set(grp.fields.map(f => f.key).filter(Boolean) as string[]);
+  const data: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args.data || {})) {
+    if (permitidas.has(k)) data[k] = v;
+  }
+  if (!Object.keys(data).length) throw new Error(`ningún campo de ${grp.label} en el payload`);
+
+  await prepararDatosGrupo(args.groupId, data, mcp, args.episodeId);
+  // coercePatch alinea los select/radio con sus opciones válidas antes de persistir.
+  const limpio = coercePatch(data);
+
+  const upd: any = await mcp.call('entities.update', { id: targetId, record_type: 'business', data: limpio });
+  if (upd?.ok === false || upd?.isError) {
+    throw new Error(`no se pudo guardar ${grp.label}: ${upd?.error || JSON.stringify(upd).slice(0, 160)}`);
+  }
+
+  let completitud: number | null = null;
+  if (args.episodeId) {
+    try {
+      const r = await recalcularCompletitud(mcp, { patientId: args.patientId, episodeId: args.episodeId });
+      completitud = r.pct;
+    } catch (err) {
+      console.error('[ficha] guardado ok pero falló el recálculo:', (err as any)?.message || err);
+    }
+  }
+  return { ok: true, target: grp.target, targetId, completitud };
+}
+
 async function handleImageGroupSubmit(
   gid: 'g_4_7' | 'g_8',
   data: Record<string, unknown>,
@@ -981,41 +1260,16 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
       // create clinical_image / consent records. The image-upload field's
       // value is a CSV of already-uploaded attachment ids.
       if (gid === 'g_4_7' || gid === 'g_8') {
-        return handleImageGroupSubmit(gid, data, session, mcp, message);
+        // Se engancha en el punto de llamada y no dentro: la función tiene varias
+        // salidas y así todas quedan cubiertas sin repetir el recálculo en cada una.
+        const r = await handleImageGroupSubmit(gid, data, session, mcp, message);
+        await recalcularTrasGuardar(mcp, session);
+        return r;
       }
 
       const isPatient = grp?.target === 'patient';
       const targetId = isPatient ? session.active_patient_id : session.active_episode_id;
-      // Numeric column — coerce the text input before persisting.
-      if (data.edad != null && data.edad !== '') data.edad = Number(data.edad);
-      if (!isPatient) {
-        const gKeys = ['gravedad_extension', 'gravedad_intensidad', 'gravedad_funcionalidad'];
-        for (const k of gKeys) {
-          if (data[k] != null && data[k] !== '') data[k] = Number(data[k]);
-        }
-        // Forms are atomic (one field each), so a single submit never carries
-        // all three gravedad fields — re-derive the total from the episode.
-        if (gKeys.some(k => data[k] != null) && session.active_episode_id) {
-          try {
-            const er = await mcp.call('entities.get', { id: session.active_episode_id });
-            const cur = ((er as any)?.data?.data) || {};
-            data.gravedad_total = gKeys.reduce(
-              (a, k) => a + (Number(data[k] ?? cur[k]) || 0), 0);
-          } catch { /* skip total */ }
-        }
-        // BLINK — the whole section is one form, so this submit carries all
-        // 5 answers; autocalculate the score (L+I+N/C+K, 1 pt each) + result.
-        if (gid === 'g_blink') {
-          const scoreKeys = ['blink_lonely', 'blink_irregular', 'blink_nervios_cambios', 'blink_known_clues'];
-          const total = scoreKeys.reduce((a, k) => a + (data[k] === true ? 1 : 0), 0);
-          data.blink_total = total;
-          data.blink_resultado = data.blink_benigna === true
-            ? 'Benigna evidente — no precisa más estudios'
-            : total >= 2
-              ? `Sugiere malignidad (${total}/4) — biopsia`
-              : `Sugiere benignidad (${total}/4)`;
-        }
-      }
+      await prepararDatosGrupo(gid, data, mcp, session.active_episode_id);
       // Human-readable record of what the form submitted — written into chat.
       const fmt = (v: unknown) => v === true ? 'Sí' : v === false ? 'No' : String(v);
       const summaryLines = (grp?.fields || [])
@@ -1045,6 +1299,7 @@ export async function handleV1Flow(ctx: Ctx): Promise<FlowResponse | null> {
             setSlot(session, 'patient_context', { id: session.active_patient_id, ...pd });
           } catch { /* skip refresh */ }
         }
+        await recalcularTrasGuardar(mcp, session);
       }
       const done: string[] = ((session.extracted_slots as any)?.ficha_done as string[]) || [];
       if (!done.includes(gid)) done.push(gid);
