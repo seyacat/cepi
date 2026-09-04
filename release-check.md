@@ -1,0 +1,202 @@
+- generic [active] [ref=f66e1]:
+  - generic:
+    - generic:
+      - progressbar
+      - generic: Cargando Google Play Console
+  - generic [ref=f66e3]:
+    - banner [ref=f66e4]:
+      - generic [ref=f66e6]:
+        - link [ref=f66e7] [cursor=pointer]:
+          - /url: /console/u/1/developers/8226648624585884343/app-list
+          - button "Logotipo de Google Play Console" [ref=f66e8]
+        - generic [ref=f66e9]:
+          - button "Notificaciones sin leer Abrir centro de notificaciones" [ref=f66e15]:
+            - img [ref=f66e19]: notifications_unread
+            - generic [ref=f66e20]: Notificaciones sin leer
+          - generic [ref=f66e22]:
+            - button "CEPI Telemedicina" [ref=f66e30] [cursor=pointer]
+            - button [ref=f66e45] [cursor=pointer]:
+              - img "Cambiar de cuenta de desarrollador" [ref=f66e47]
+    - navigation [ref=f66e53]:
+      - link "Todas las aplicaciones" [ref=f66e54] [cursor=pointer]:
+        - /url: /console/u/1/developers/8226648624585884343/app-list
+        - img [ref=f66e56]: keyboard_backspace
+      - list [ref=f66e58]:
+        - listitem "Panel de control" [ref=f66e61]:
+          - button "Panel de control" [ref=f66e62] [cursor=pointer]:
+            - img [ref=f66e65]: dashboard
+        - listitem "Estadísticas" [ref=f66e69]:
+          - button "Estadísticas" [ref=f66e70] [cursor=pointer]:
+            - img [ref=f66e73]: bar_chart
+        - listitem "Resumen de publicación" [ref=f66e77]:
+          - button "Resumen de publicación" [ref=f66e78] [cursor=pointer]:
+            - img [ref=f66e81]: overview
+        - listitem "Protegida con Play" [ref=f66e85]:
+          - button "Protegida con Play" [ref=f66e86] [cursor=pointer]:
+            - img [ref=f66e89]: shield
+        - listitem "Probar y publicar" [ref=f66e93]:
+          - button "Probar y publicar" [ref=f66e94] [cursor=pointer]:
+            - img [ref=f66e97]: rocket_launch
+          - list [ref=f66e99]:
+            - generic [ref=f66e101]:
+              - listitem "Últimas versiones y app bundles" [ref=f66e103]:
+                - button "Últimas versiones y app bundles" [ref=f66e104] [cursor=pointer]
+              - listitem "Producción" [ref=f66e107]:
+                - button "Producción" [ref=f66e108] [cursor=pointer]
+              - listitem "Pruebas" [ref=f66e111]:
+                - button "Pruebas" [ref=f66e112] [cursor=pointer]:
+                  - img [ref=f66e115]: expand_less
+                - list [ref=f66e116]:
+                  - generic [ref=f66e118]:
+                    - listitem "Prueba abierta" [ref=f66e120]:
+                      - button "Prueba abierta" [ref=f66e121] [cursor=pointer]
+                    - listitem "Prueba cerrada" [ref=f66e124]:
+                      - button "Prueba cerrada" [ref=f66e125] [cursor=pointer]
+                    - listitem "Prueba interna" [ref=f66e128]:
+                      - button "Prueba interna" [ref=f66e129] [cursor=pointer]
+                    - listitem "Informe previo al lanzamiento" [ref=f66e132]:
+                      - button "Informe previo al lanzamiento" [ref=f66e133] [cursor=pointer]:
+                        - img [ref=f66e136]: expand_more
+                    - listitem "Compartir aplicaciones de forma interna" [ref=f66e138]:
+                      - button "Compartir aplicaciones de forma interna" [ref=f66e139] [cursor=pointer]
+              - listitem "Registro previo" [ref=f66e142]:
+                - button "Registro previo" [ref=f66e143] [cursor=pointer]
+              - listitem "Integridad de la app" [ref=f66e146]:
+                - button "Integridad de la app" [ref=f66e147] [cursor=pointer]
+              - listitem "Ajustes avanzados" [ref=f66e150]:
+                - button "Ajustes avanzados" [ref=f66e151] [cursor=pointer]
+        - listitem "Monitorizar y mejorar" [ref=f66e155]:
+          - button "Monitorizar y mejorar" [ref=f66e156] [cursor=pointer]:
+            - img [ref=f66e159]: vital_signs
+        - listitem "Aumentar usuarios" [ref=f66e163]:
+          - button "Aumentar usuarios" [ref=f66e164] [cursor=pointer]:
+            - img [ref=f66e167]: finance_mode
+        - listitem "Monetizar con Play" [ref=f66e171]:
+          - button "Monetizar con Play" [ref=f66e172] [cursor=pointer]:
+            - img [ref=f66e175]: sell
+    - generic [ref=f66e178]:
+      - generic [ref=f66e386]:
+        - heading "Crear versión de prueba interna" [level=1] [ref=f66e414]
+        - generic [ref=f66e420]:
+          - generic [ref=f66e424]:
+            - tablist [ref=f66e425]:
+              - 'tab "Crear versión: paso 1 de 2" [selected] [ref=f66e426]':
+                - generic [ref=f66e427]: "1"
+                - generic [ref=f66e430]: Crear versión
+              - 'tab "Revisar y confirmar: paso 2 de 2" [disabled] [ref=f66e433]':
+                - generic [ref=f66e434]: "2"
+                - generic [ref=f66e437]: Revisar y confirmar
+            - generic:
+              - tabpanel
+          - button "Descartar versión en borrador" [ref=f66e443]
+        - heading "App bundles" [level=2] [ref=f66e458]
+        - generic [ref=f66e461]:
+          - generic [ref=f66e464]:
+            - generic [ref=f66e468]:
+              - generic [ref=f66e471]:
+                - img [ref=f66e475]: check_circle
+                - heading "‎2 de 2 mejoras activas" [level=3] [ref=f66e477]
+              - 'button "Ocultar contenido: ‎2 de 2 mejoras activas" [expanded] [ref=f66e480] [cursor=pointer]':
+                - img [ref=f66e483]: expand_less
+            - generic [ref=f66e484]:
+              - generic [ref=f66e668]:
+                - img [ref=f66e671]: info
+                - generic [ref=f66e672]: Vuelve a subir tu app bundle para aplicar los cambios de mejora
+              - generic [ref=f66e485]:
+                - generic [ref=f66e488]:
+                  - img [ref=f66e491]: key_vertical
+                  - strong [ref=f66e493]: Las versiones están firmadas por Google Play
+                  - 'button "Ir a firma de aplicaciones: Las versiones están firmadas por Google Play" [ref=f66e494]':
+                    - text: Ir a firma de aplicaciones
+                    - img [ref=f66e498]: arrow_right_alt
+                - generic [ref=f66e501]:
+                  - img [ref=f66e504]: shield_locked
+                  - strong [ref=f66e506]: La protección automática está activada
+                  - 'button "Ir a Protección automática: La protección automática está activada" [ref=f66e507]':
+                    - text: Ir a Protección automática
+                    - img [ref=f66e511]: arrow_right_alt
+          - generic [ref=f66e514]:
+            - heading "Subir app bundles" [level=3] [ref=f66e523]
+            - generic [ref=f66e526]:
+              - generic [ref=f66e673]:
+                - img [ref=f66e678]: apk_document
+                - generic [ref=f66e679]: Arrastra aquí los app bundles que quieras subir
+                - generic [ref=f66e681]:
+                  - button "Subir" [ref=f66e682]:
+                    - img [ref=f66e686]: upload
+                  - button "Añadir de la biblioteca" [ref=f66e688]:
+                    - img [ref=f66e692]: add_to_photos
+              - generic [ref=f66e696]:
+                - generic [ref=f66e697]: app-release.aab
+                - button "Eliminar app-release.aab" [ref=f66e698] [cursor=pointer]:
+                  - img [ref=f66e701]: delete
+          - grid "Elementos" [ref=f66e711]:
+            - row [ref=f66e712]:
+              - columnheader "Tipo de archivo" [ref=f66e713] [cursor=pointer]
+              - columnheader "Versión" [ref=f66e714] [cursor=pointer]
+              - columnheader "Niveles de API" [ref=f66e715] [cursor=pointer]
+              - columnheader "SDK objetivo" [ref=f66e716] [cursor=pointer]
+              - columnheader "Diseños de pantalla" [ref=f66e717] [cursor=pointer]
+              - columnheader "ABIs" [ref=f66e718] [cursor=pointer]
+              - columnheader "Funciones obligatorias" [ref=f66e719] [cursor=pointer]
+              - cell [ref=f66e720]
+              - cell [ref=f66e721]
+            - row [ref=f66e722]:
+              - gridcell [ref=f66e723]:
+                - generic "Celda de tabla con ventana emergente" [ref=f66e726]: App bundle
+              - gridcell "2 (1.0.1)" [ref=f66e729]
+              - gridcell "24 y posterior" [ref=f66e731]
+              - gridcell "36" [ref=f66e733]
+              - gridcell "4" [ref=f66e735]
+              - gridcell "4" [ref=f66e737]
+              - gridcell "1" [ref=f66e739]
+              - gridcell [ref=f66e741]:
+                - button "Gestionar artefacto" [ref=f66e745] [cursor=pointer]:
+                  - img [ref=f66e747]: more_vert
+              - gridcell [ref=f66e748]:
+                - 'button "Ver detalles de App bundle: 2 (1.0.1)" [ref=f66e750] [cursor=pointer]':
+                  - img [ref=f66e753]: arrow_right_alt
+        - generic [ref=f66e549]:
+          - heading "Detalles de la versión" [level=2] [ref=f66e558]
+          - generic [ref=f66e562]:
+            - generic [ref=f66e563]:
+              - group "Nombre de la versión" [ref=f66e565]:
+                - generic [ref=f66e566]: Nombre de la versión *
+                - generic [ref=f66e570]:
+                  - generic [ref=f66e571]:
+                    - textbox "Nombre de la versión" [ref=f66e573]: 2 (1.0.1)
+                    - generic [ref=f66e574]:
+                      - paragraph [ref=f66e575]
+                      - generic [ref=f66e576]:
+                        - generic [ref=f66e577]: 9/50
+                        - generic [ref=f66e578]: El texto tiene 9 caracteres de 50
+                  - generic [ref=f66e579]: Solo se usará para que puedas identificar esta versión y no se mostrará a los usuarios en Google Play. El nombre sugerido se basa en el primer app bundle o APK de esta versión, pero puedes cambiarlo.
+              - group "Notas de la versión" [ref=f66e581]:
+                - generic [ref=f66e586]:
+                  - button "Copiar de una versión anterior" [ref=f66e590]
+                  - generic [ref=f66e594]:
+                    - textbox "Notas de la versión" [ref=f66e597]: <es-419> Introduce o pega aquí las notas de la versión en es-419 </es-419>
+                    - paragraph [ref=f66e599]
+                  - generic [ref=f66e600]: Has incluido notas de la versión en 0 idiomas
+                  - generic [ref=f66e601]: Informa a los usuarios del contenido de tu versión. Introduce notas de la versión dentro de las etiquetas de cada idioma.
+            - generic [ref=f66e609]:
+              - button "Descartar cambios" [ref=f66e611]
+              - button "Guardar como borrador" [ref=f66e616]
+              - button "Siguiente" [ref=f66e621]
+      - generic [ref=f66e374]:
+        - generic [ref=f66e393]:
+          - link "Novedades sobre productos" [ref=f66e394] [cursor=pointer]:
+            - /url: https://play.google.com/console/about/whats-new/
+          - link "Panel de Estado" [ref=f66e395] [cursor=pointer]:
+            - /url: https://status.play.google.com/
+          - link "Ayuda" [ref=f66e396] [cursor=pointer]:
+            - /url: /console/u/1/developers/8226648624585884343/help-and-support?app=4974089655011192327
+        - generic [ref=f66e397]:
+          - generic [ref=f66e398]: © 2026 Google
+          - link "Privacidad" [ref=f66e399] [cursor=pointer]:
+            - /url: https://www.google.com/policies/privacy/
+          - link "Acuerdo de distribución para desarrolladores" [ref=f66e400] [cursor=pointer]:
+            - /url: https://play.google.com/about/developer-distribution-agreement.html
+          - link "Términos del Servicio" [ref=f66e401] [cursor=pointer]:
+            - /url: https://play.google.com/about/console/terms-of-service/
+  - status [ref=f66e754]

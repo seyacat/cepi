@@ -48,3 +48,22 @@ backups/
 # vite transient config bundles
 *.timestamp-*.mjs
 client_secret*
+
+# Documentos de identidad y societarios. NUNCA al repo: una vez commiteados
+# quedan en el historial para siempre, y el remoto es de GitHub.
+docs/Cedula*.jpg
+docs/CI *.pdf
+docs/*RUC*.pdf
+docs/Nombramiento*.pdf
+docs/Roberto Rodriguez CI.pdf
+docs/Look up your D-U-N-S Number*.pdf
+
+# Capturas de trabajo: se sacan de nuevo en un minuto, pesan y no se revisan.
+login-state.png
+play-app-list.png
+portal-casos-ficha.png
+privacidad-preview.png
+release-state.png
+
+# Estado del MCP de Playwright (snapshots y logs de consola por sesión)
+.playwright-mcp/

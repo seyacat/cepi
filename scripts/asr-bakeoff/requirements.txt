@@ -1,0 +1,14 @@
+# Núcleo del bake-off
+faster-whisper==1.2.1
+sherpa-onnx==1.13.4
+jiwer==4.0.0
+num2words==0.5.14
+numpy>=1.26,<3
+
+# CUDA para ctranslate2 (faster-whisper en GPU).
+# Sin esto vas a ver "Library libcublas.so.12 is not found or cannot be loaded"
+# aunque tengas el driver instalado: ctranslate2 busca las libs de CUDA 12 en
+# LD_LIBRARY_PATH, no las toma del driver. run.sh arma la ruta a partir de estos
+# paquetes. En una máquina sin GPU, comentá las dos líneas.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12

@@ -1,0 +1,17 @@
+# Audio y referencias: pueden contener datos de salud. NUNCA al repo.
+# Ojo: "gitignoreado" no es "seguro". Estos archivos viven en /mnt/sda1, que es
+# NTFS sin cifrar. Ver README §5.
+audio/*
+refs/*
+!*/.gitkeep
+
+# Pesos de modelos: gigabytes
+models/*
+!models/.gitkeep
+
+# Resultados: se regeneran con ./run.sh --solo-reporte
+results/*
+!results/.gitkeep
+
+.venv/
+__pycache__/
